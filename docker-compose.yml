@@ -1,0 +1,105 @@
+# Nexcompute 管理端全栈 Docker Compose
+# 包含：PostgreSQL + Redis + 后端（SpringBoot）+ 前端（Vue + nginx）
+
+services:
+  # ---- 数据库 ----
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexcompute-postgres
+    environment:
+      POSTGRES_DB: nexcompute
+      POSTGRES_USER: nexcompute
+      POSTGRES_PASSWORD: nexcompute
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexcompute-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexcompute"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - nexcompute
+
+  # ---- 缓存与消息队列 ----
+  redis:
+    image: redis:7-alpine
+    container_name: nexcompute-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - nexcompute-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - nexcompute
+
+  # ---- 管理端后端 ----
+  backend:
+    build:
+      context: ./management-backend
+      dockerfile: Dockerfile.prebuilt
+    container_name: nexcompute-backend
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/nexcompute
+      DB_USERNAME: nexcompute
+      DB_PASSWORD: nexcompute
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LWZvci1qd3QtdG9rZW4tc2lnbmluZy1wbGVhc2UtY2hhbmdlLWl0
+      CORS_ORIGINS: http://localhost,http://localhost:5173
+      STORAGE_ROOT: /app/data/storage
+      MONITORING_INTERVAL: 5
+      MONITORING_RETENTION_DAYS: 30
+      HEARTBEAT_TIMEOUT: 3
+    ports:
+      - "8080:8080"
+    volumes:
+      - nexcompute-storage:/app/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      - nexcompute
+    restart: unless-stopped
+
+  # ---- 管理端前端 ----
+  frontend:
+    build:
+      context: ./management-frontend
+      dockerfile: Dockerfile
+    container_name: nexcompute-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nexcompute
+    restart: unless-stopped
+
+volumes:
+  nexcompute-pgdata:
+  nexcompute-redis-data:
+  nexcompute-storage:
+
+networks:
+  nexcompute:
+    driver: bridge

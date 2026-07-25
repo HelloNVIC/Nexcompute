@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Nexcompute">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1677ff"/>
+      <stop offset="1" stop-color="#0958d9"/>
+    </linearGradient>
+    <g id="chip">
+      <rect x="-6" y="-6" width="12" height="12" rx="3.5" fill="#ffffff"/>
+      <rect x="-2" y="-2" width="4" height="4" rx="1" fill="url(#grad)"/>
+    </g>
+  </defs>
+
+  <!-- tile -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#grad)"/>
+
+  <!-- "N" formed by data traces between distributed chips -->
+  <g stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none">
+    <line x1="19" y1="19" x2="19" y2="45"/>
+    <line x1="45" y1="19" x2="45" y2="45"/>
+    <line x1="19" y1="19" x2="45" y2="45"/>
+  </g>
+
+  <!-- four GPU chip nodes -->
+  <use href="#chip" x="19" y="19"/>
+  <use href="#chip" x="45" y="19"/>
+  <use href="#chip" x="19" y="45"/>
+  <use href="#chip" x="45" y="45"/>
+</svg>

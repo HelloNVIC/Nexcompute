@@ -1,0 +1,17 @@
+spring:
+  flyway:
+    enabled: true
+    clean-disabled: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+nexcompute:
+  jwt:
+    secret: test-secret-key-for-jwt-token-signing-in-test-environment-only-min-256-bits!!
+    expiration-ms: 3600000
+
+logging:
+  level:
+    com.nexcompute: DEBUG

@@ -1,0 +1,34 @@
+# ===== Build artifacts =====
+**/build/
+**/.gradle/
+**/dist/
+**/bin/
+*.jar
+!**/gradle/wrapper/gradle-wrapper.jar
+*.class
+
+# ===== Frontend =====
+**/node_modules/
+**/.vite/
+**/.cache/
+
+# ===== Controlled agent: binaries & runtime config (contains agent token) =====
+*.exe
+*.dll
+controlled-agent/nexcompute-agent.json
+
+# ===== Logs =====
+*.log
+
+# ===== Data / storage (runtime) =====
+/data/
+**/data/storage/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.iml
+
+# ===== OS =====
+Thumbs.db
+.DS_Store

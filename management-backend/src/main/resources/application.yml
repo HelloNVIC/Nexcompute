@@ -1,0 +1,74 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: nexcompute-management
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/nexcompute}
+    username: ${DB_USERNAME:nexcompute}
+    password: ${DB_PASSWORD:nexcompute}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 200MB
+
+# JWT 配置
+nexcompute:
+  jwt:
+    secret: ${JWT_SECRET:dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LWZvci1qd3QtdG9rZW4tc2lnbmluZy1wbGVhc2UtY2hhbmdlLWl0}
+    expiration-ms: 86400000  # 24h
+    header: Authorization
+    prefix: "Bearer "
+  # 系统配置项（任务 1.7）
+  monitoring:
+    collect-interval-seconds: ${MONITORING_INTERVAL:5}      # 监控采集粒度，默认 5 秒
+    retention-days: ${MONITORING_RETENTION_DAYS:30}          # 监控历史保留 30 日
+    heartbeat-timeout-seconds: ${HEARTBEAT_TIMEOUT:3}        # platform-refinements #4：3 秒未收到心跳视为离线
+    offline-scan-interval-ms: ${OFFLINE_SCAN_INTERVAL:2000}  # 离线检测扫描间隔（2 秒，匹配 3 秒阈值）
+  agent:
+    heartbeat-interval-seconds: ${HEARTBEAT_INTERVAL:5}      # 受控端心跳间隔
+    ws-reconnect-base-ms: ${WS_RECONNECT_BASE:2000}          # WS 重连基础退避
+    ws-reconnect-max-ms: ${WS_RECONNECT_MAX:60000}           # WS 重连最大退避
+    file-transfer-chunk-size: ${FILE_CHUNK_SIZE:4194304}     # 文件分块 4MB
+  storage:
+    root: ${STORAGE_ROOT:./data/storage}                    # 管理端文件存储根目录
+    image-tar-dir: ${STORAGE_ROOT:./data/storage}/images    # 镜像 tar
+    public-image-dir: ${STORAGE_ROOT:./data/storage}/public-images  # 公共镜像库
+    migration-staging-dir: ${STORAGE_ROOT:./data/storage}/migration  # 迁移中转
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+
+logging:
+  level:
+    com.nexcompute: INFO
+    org.hibernate.SQL: WARN
+    org.springframework: INFO
