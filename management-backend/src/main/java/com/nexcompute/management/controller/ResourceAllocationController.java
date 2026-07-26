@@ -80,6 +80,19 @@ public class ResourceAllocationController {
         return ApiResponse.success();
     }
 
+    /** 撤销课题组在指定实例上的分配影响检查（撤销前提示） */
+    @GetMapping("/groups/{instanceId}/{groupId}/impact")
+    public ApiResponse<java.util.Map<String, Object>> groupImpact(@PathVariable Long instanceId,
+                                                                  @PathVariable Long groupId) {
+        return ApiResponse.success(allocationService.groupAllocationImpact(instanceId, groupId));
+    }
+
+    /** 撤销课题组在指定实例上的分配 */
+    @DeleteMapping("/groups/{instanceId}/{groupId}")
+    public ApiResponse<Integer> deallocateGroup(@PathVariable Long instanceId, @PathVariable Long groupId) {
+        return ApiResponse.success(allocationService.deallocateGroup(instanceId, groupId));
+    }
+
     /** 学生查看分配给自己的机器 */
     @GetMapping("/machines/my")
     public ApiResponse<List<MachineAllocation>> myMachines() {

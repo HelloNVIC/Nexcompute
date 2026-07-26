@@ -34,12 +34,12 @@ public class TicketController {
         return ApiResponse.success(ticketService.getTicket(id));
     }
 
-    /** 学生提交工单（任务 12.2） */
+    /** 学生提交工单（任务 12.2；D11：联系方式） */
     @PostMapping
     @RequirePermission(module = "ticket", action = RequirePermission.Action.EDIT)
     public ApiResponse<Ticket> create(@Valid @RequestBody CreateTicketRequest request) {
         return ApiResponse.success(ticketService.createTicket(
-                request.getTitle(), request.getType(), request.getContent()));
+                request.getTitle(), request.getType(), request.getContent(), request.getContact()));
     }
 
     /** 管理员回复并关闭（任务 12.4） */
@@ -67,6 +67,7 @@ public class TicketController {
         private String title;
         private TicketType type;
         private String content;
+        private String contact;  // D11：联系方式（默认账户手机号）
     }
 
     @Data

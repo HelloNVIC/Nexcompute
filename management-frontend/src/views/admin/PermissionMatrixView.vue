@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { permissionApi, type PermissionMatrixItem, type Perm } from '@/api/permission'
 
 const loading = ref(false)
@@ -65,29 +65,55 @@ async function toggleField(key: keyof typeof fieldConfig, checked: boolean): Pro
   }
 }
 
-async function updatePerm(moduleCode: string, role: string, field: keyof Perm, checked: boolean): Promise<void> {
+const fieldLabel = (field: keyof Perm): string =>
+  ({ canView: '查看', canEdit: '编辑', canDelete: '删除' } as Record<keyof Perm, string>)[field]
+
+// D13：修改需确认方生效（弹 a-modal 确认，取消则回滚本地状态）
+function updatePerm(moduleCode: string, role: string, field: keyof Perm, checked: boolean): void {
   const item = matrix.value.find((m) => m.moduleCode === moduleCode)
   if (!item) return
-  const perm = item.permissions[role]
-  if (!perm) {
+  if (!item.permissions[role]) {
     item.permissions[role] = { canView: false, canEdit: false, canDelete: false }
   }
-  item.permissions[role][field] = checked
+  const perm = item.permissions[role]
+  const prev = perm[field]
+  perm[field] = checked // 本地先更新，待确认
 
+  Modal.confirm({
+    title: '确认修改权限矩阵？',
+    content: `${role} 对「${item.moduleName}」的「${fieldLabel(field)}」权限将改为${checked ? '允许' : '禁止'}`,
+    okText: '确认修改',
+    cancelText: '取消',
+    onOk: async () => {
+      saving.value = true
+      try {
+        await permissionApi.update({
+          role,
+          moduleCode,
+          canView: perm.canView,
+          canEdit: perm.canEdit,
+          canDelete: perm.canDelete,
+        })
+        message.success(`${role} 对 ${item.moduleName} 权限已更新`)
+      } catch {
+        perm[field] = prev // 提交失败回滚
+      } finally {
+        saving.value = false
+      }
+    },
+    onCancel: () => {
+      perm[field] = prev // 未确认不修改既有权限矩阵
+    },
+  })
+}
+
+// D13：恢复默认权限矩阵
+async function resetDefault(): Promise<void> {
   saving.value = true
   try {
-    const p = item.permissions[role]
-    await permissionApi.update({
-      role,
-      moduleCode,
-      canView: p.canView,
-      canEdit: p.canEdit,
-      canDelete: p.canDelete,
-    })
-    message.success(`${role} 对 ${item.moduleName} 权限已更新`)
-  } catch {
-    // 回滚
-    item.permissions[role][field] = !checked
+    await permissionApi.resetDefault()
+    message.success('已恢复默认权限矩阵')
+    await load()
   } finally {
     saving.value = false
   }
@@ -100,6 +126,19 @@ async function updatePerm(moduleCode: string, role: string, field: keyof Perm, c
     <a-typography-paragraph type="secondary">
       角色 × 模块 × 操作（查看 / 编辑 / 删除）细粒度权限配置
     </a-typography-paragraph>
+
+    <div style="margin-bottom: 12px">
+      <a-popconfirm
+        title="确认恢复默认权限矩阵？"
+        description="当前自定义权限配置将被平台默认配置覆盖。"
+        ok-text="恢复"
+        ok-type="danger"
+        cancel-text="取消"
+        @confirm="resetDefault"
+      >
+        <a-button danger :loading="saving">恢复默认</a-button>
+      </a-popconfirm>
+    </div>
 
     <a-table :data-source="matrix" :loading="loading" :pagination="false" row-key="moduleCode" bordered>
       <a-table-column title="模块" data-index="moduleName" :width="150" />

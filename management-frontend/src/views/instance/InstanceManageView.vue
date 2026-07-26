@@ -109,6 +109,12 @@ function confirmScreenOff(instance: PhysicalInstance): void {
           <a-tag>{{ record.connectMode === 'direct' ? '直连' : '穿透' }}</a-tag>
         </template>
       </a-table-column>
+      <a-table-column title="受控端版本" :width="110">
+        <template #default="{ record }">
+          <span v-if="record.agentVersion">{{ record.agentVersion }}</span>
+          <span v-else style="color: #ccc">-</span>
+        </template>
+      </a-table-column>
       <a-table-column title="状态" :width="80">
         <template #default="{ record }">
           <a-badge :status="record.status === 'ONLINE' ? 'success' : 'error'"

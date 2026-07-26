@@ -50,6 +50,10 @@ public class NexcomputeProperties {
         private long wsReconnectMaxMs = 60000L;
         /** 文件分块大小（字节），默认 4MB */
         private int fileTransferChunkSize = 4 * 1024 * 1024;
+        /** OTA 升级：发送 agent.upgrade 命令并等待受控端回包的 WS 超时（毫秒），默认 300s */
+        private long upgradeCommandTimeoutMs = 300_000L;
+        /** OTA 升级：发完命令后等待受控端重启并回传新版本的轮询超时（毫秒），默认 180s */
+        private long upgradeVersionWaitTimeoutMs = 180_000L;
     }
 
     @Data
@@ -58,6 +62,10 @@ public class NexcomputeProperties {
         private String imageTarDir;
         private String publicImageDir;
         private String migrationStagingDir;
+        /** 受控端环境文件托管目录（D4：${root}/env） */
+        private String envDir;
+        /** 受控端 OTA 升级 exe 托管目录（D7：${root}/agent-upgrade） */
+        private String agentUpgradeDir;
     }
 
     @Data

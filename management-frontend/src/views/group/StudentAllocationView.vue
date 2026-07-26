@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, h, type VNode } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import {
@@ -158,31 +158,108 @@ const instanceLabel = (id: number) => {
   return i ? `${i.instanceNumber} - ${i.machineName || '未命名'}` : String(id)
 }
 
-// 撤销分配（platform-refinements #3：二次确认 + 运行容器/存储池影响提示）
+// 撤销分配（platform-refinements #3：二次确认 + 运行容器/存储池影响表格）
 async function confirmRevokeAllocation(record: MachineAllocation): Promise<void> {
-  let detail = ''
+  let title = '确认撤销该分配？'
+  let content: VNode | string = '加载影响详情中…'
+  let hasImpact = false
   try {
     const imp = await allocationApi.impact(record.id)
-    const parts: string[] = [`学生：${imp.studentName}`]
-    if (imp.runningContainers.length) {
-      parts.push(`运行中容器 ${imp.runningContainers.length} 个：${imp.runningContainers.map((c) => c.name).join('、')}`)
-    }
-    if (imp.storagePools.length) {
-      parts.push(`存储池 ${imp.storagePools.length} 个：${imp.storagePools.map((p) => p.poolName).join('、')}`)
-    }
-    detail = parts.join('\n')
+    hasImpact = imp.runningContainers.length > 0 || imp.storagePools.length > 0
+    title = `确认撤销「${imp.studentName}」的分配？`
+    content = renderImpactContent(
+      [[`学生`, imp.studentName], [`实例`, instanceLabel(imp.instanceId)]],
+      imp.runningContainers.map((c) => ({ name: c.name })),
+      imp.storagePools.map((p) => ({ poolName: p.poolName })),
+      '该学生在此实例上仍有运行容器或存储池，撤销后其将无法在此实例创建新容器（已运行的容器与存储池不受影响）。',
+    )
   } catch {
-    detail = '无法获取影响详情，是否仍要撤销？'
+    content = '无法获取影响详情，是否仍要撤销？'
   }
   Modal.confirm({
-    title: '确认撤销该分配？',
-    content: detail + (detail.includes('运行中容器') || detail.includes('存储池') ? '\n\n该学生在此实例上仍有运行容器或存储池，撤销后其将无法在此实例创建新容器（已运行的容器与存储池不受影响）。' : ''),
+    title,
+    content,
+    width: 640,
+    okText: '确认撤销',
+    okType: hasImpact ? 'danger' : 'primary',
     onOk: async () => {
       await allocationApi.deallocate(record.id)
       message.success('已撤销分配')
       load()
     },
   })
+}
+
+// 撤销课题组在指定实例上的分配（管理员；撤销前提示运行容器/存储池，表格化展示）
+async function confirmRevokeGroupAllocation(record: {
+  instanceId: number
+  groupId: number
+  groupName: string
+  instanceNumber: string
+}): Promise<void> {
+  let title = `确认撤销课题组「${record.groupName}」在实例 ${record.instanceNumber} 上的分配？`
+  let content: VNode | string = '加载影响详情中…'
+  let hasImpact = false
+  try {
+    const imp = await allocationApi.groupImpact(record.instanceId, record.groupId)
+    hasImpact = imp.runningContainers.length > 0 || imp.storagePools.length > 0
+    content = renderImpactContent(
+      [[`课题组`, imp.groupName], [`实例`, record.instanceNumber], [`成员数`, String(imp.memberCount)]],
+      imp.runningContainers.map((c) => ({ name: c.name, ownerId: c.ownerId })),
+      imp.storagePools.map((p) => ({ poolName: p.poolName, ownerId: p.ownerId })),
+      '该课题组在此实例上仍有运行容器或存储池，撤销后成员将无法在此实例创建新容器（已运行的容器与存储池不受影响）。',
+    )
+  } catch {
+    content = '无法获取影响详情，是否仍要撤销？'
+  }
+  Modal.confirm({
+    title,
+    content,
+    width: 720,
+    okText: '确认撤销',
+    okType: hasImpact ? 'danger' : 'primary',
+    onOk: async () => {
+      await allocationApi.deallocateGroup(record.instanceId, record.groupId)
+      message.success('已撤销课题组分配')
+      load()
+    },
+  })
+}
+
+// 渲染撤销影响内容：基本信息表 + 运行容器表 + 存储池表 + 提示
+function renderImpactContent(
+  infoRows: Array<[string, string]>,
+  containers: Array<{ name: string; ownerId?: number }>,
+  pools: Array<{ poolName: string; ownerId?: number }>,
+  warning: string,
+): VNode {
+  const nodes: VNode[] = []
+  nodes.push(
+    h('table', { class: 'impact-info-table' }, [
+      h('tbody', infoRows.map(([k, v]) => h('tr', [h('th', k), h('td', v)]))),
+    ]),
+  )
+  if (containers.length > 0) {
+    nodes.push(h('h4', { style: 'margin: 12px 0 6px' }, `运行中容器（${containers.length}）`))
+    nodes.push(renderSimpleTable(['容器名'], containers.map((c) => [c.name])))
+  }
+  if (pools.length > 0) {
+    nodes.push(h('h4', { style: 'margin: 12px 0 6px' }, `存储池（${pools.length}）`))
+    nodes.push(renderSimpleTable(['存储池名'], pools.map((p) => [p.poolName])))
+  }
+  if (containers.length > 0 || pools.length > 0) {
+    nodes.push(h('p', { style: 'color: #fa8c16; margin-top: 12px' }, warning))
+  } else {
+    nodes.push(h('p', { style: 'color: #999; margin-top: 12px' }, '该分配无运行容器或存储池，可安全撤销。'))
+  }
+  return h('div', nodes)
+}
+
+function renderSimpleTable(headers: string[], rows: Array<string[]>): VNode {
+  return h('table', { class: 'impact-data-table' }, [
+    h('thead', h('tr', headers.map((hd) => h('th', hd)))),
+    h('tbody', rows.map((r) => h('tr', r.map((cell) => h('td', cell))))),
+  ])
 }
 </script>
 
@@ -342,6 +419,13 @@ async function confirmRevokeAllocation(record: MachineAllocation): Promise<void>
         <a-table-column title="分配时间" :width="180">
           <template #default="{ record }">{{ dayjs(record.allocatedAt).format('YYYY-MM-DD HH:mm') }}</template>
         </a-table-column>
+        <a-table-column title="操作" :width="100">
+          <template #default="{ record }">
+            <a-button type="link" danger size="small" @click="confirmRevokeGroupAllocation(record)">
+              撤销
+            </a-button>
+          </template>
+        </a-table-column>
       </a-table>
     </a-card>
 
@@ -362,3 +446,32 @@ async function confirmRevokeAllocation(record: MachineAllocation): Promise<void>
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+:deep(.impact-info-table),
+:deep(.impact-data-table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+:deep(.impact-info-table th) {
+  text-align: left;
+  width: 90px;
+  color: rgba(0, 0, 0, 0.45);
+  padding: 4px 8px;
+  vertical-align: top;
+}
+:deep(.impact-info-table td) {
+  padding: 4px 8px;
+}
+:deep(.impact-data-table th),
+:deep(.impact-data-table td) {
+  border: 1px solid #f0f0f0;
+  padding: 6px 8px;
+  text-align: left;
+}
+:deep(.impact-data-table th) {
+  background: #fafafa;
+  font-weight: 500;
+}
+</style>

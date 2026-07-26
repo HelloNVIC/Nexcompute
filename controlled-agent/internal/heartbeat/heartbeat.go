@@ -15,6 +15,7 @@ import (
 	"github.com/nexcompute/controlled-agent/internal/config"
 	"github.com/nexcompute/controlled-agent/internal/docker"
 	"github.com/nexcompute/controlled-agent/internal/sysinfo"
+	"github.com/nexcompute/controlled-agent/internal/version"
 )
 
 // Reporter 心跳上报器
@@ -118,13 +119,14 @@ func (r *Reporter) sendHeartbeat() {
 		"connectMode":    r.cfg.ConnectMode,
 		"machineName":    hostInfo.Hostname,
 		"osInfo":         hostInfo.OS,
-		"agentVersion":   "0.1.0",
+		"agentVersion":   version.Version, // D1：构建期 ldflags 注入，不再硬编码
 		"storageRoot":    r.cfg.StorageRoot,
 		"status":         status,
 		"ipAddresses":   ipAddresses, // 结构化主机 IP（任务 4.2 顶层字段）
 		"containers":     containers, // 各容器运行状态（任务 4.2 顶层字段）
-		"mac":           r.fingerprint.MAC,        // platform-refinements #1：MAC
-		"machineCode":   r.fingerprint.MachineCode, // platform-refinements #1：机器码
+		"mac":           r.fingerprint.MAC,         // platform-refinements #1：MAC
+		"machineCode":   r.fingerprint.MachineCode,   // platform-refinements #1：机器码
+		"smbiosUUID":    r.fingerprint.SmbiosUUID,    // D14：SMBIOS UUID 主指纹
 		"timestamp":      time.Now().UnixMilli(),
 	})
 

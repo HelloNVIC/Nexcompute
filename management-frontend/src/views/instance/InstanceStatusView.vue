@@ -157,9 +157,10 @@ const selectedGpuInfo = computed<StructuredGpu | null>(() => {
     <a-typography-title :level="3">物理实例状态</a-typography-title>
 
     <a-space style="margin-bottom: 16px">
-      <a-select v-model:value="selectedId" style="width: 250px" @change="loadInstanceData">
+      <a-select v-model:value="selectedId" style="width: 320px" @change="loadInstanceData">
         <a-select-option v-for="i in instances" :key="i.id" :value="i.id">
           {{ i.instanceNumber }} - {{ i.machineName }}
+          <span v-if="i.agentVersion" style="color: #999; font-size: 12px">· v{{ i.agentVersion }}</span>
         </a-select-option>
       </a-select>
       <a-button @click="loadHistory">查看 30 日历史</a-button>

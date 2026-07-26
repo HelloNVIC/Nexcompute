@@ -27,7 +27,7 @@ public class Ticket {
     private String title;
 
     /** 工单唯一编号（platform-refinements #3，如 TK20260724-000001） */
-    @Column(name = "ticket_no", nullable = false, length = 32, updatable = false)
+    @Column(name = "ticket_no", nullable = false, length = 32)
     private String ticketNo;
 
     @Column(nullable = false, length = 30)
@@ -51,6 +51,10 @@ public class Ticket {
 
     @Column(nullable = false, length = 20)
     private String status; // PENDING / CLOSED
+
+    /** 联系方式（platform-env-ota-realtime D11：默认账户手机号，可改） */
+    @Column(length = 100)
+    private String contact;
 
     private String reply;
 

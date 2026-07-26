@@ -8,6 +8,7 @@ export interface Ticket {
   title: string
   type: TicketType
   content: string
+  contact?: string  // D11：联系方式（默认账户手机号）
   submitterId: number
   submitterName: string
   groupName?: string
@@ -21,7 +22,8 @@ export interface Ticket {
 export const ticketApi = {
   list: () => http.get<Ticket[]>('/tickets'),
   get: (id: number) => http.get<Ticket>(`/tickets/${id}`),
-  create: (data: { title: string; type: TicketType; content: string }) => http.post<Ticket>('/tickets', data),
+  create: (data: { title: string; type: TicketType; content: string; contact?: string }) =>
+    http.post<Ticket>('/tickets', data),
   close: (id: number, reply: string) => http.post<Ticket>(`/tickets/${id}/close`, { reply }),
   /** 提交人撤销工单（platform-refinements #6） */
   cancel: (id: number) => http.delete(`/tickets/${id}`),

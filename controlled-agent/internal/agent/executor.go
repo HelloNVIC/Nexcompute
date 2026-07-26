@@ -31,8 +31,10 @@ type Result struct {
 
 // Executor 命令执行器
 type Executor struct {
-	cfg    *config.Config
-	docker *docker.Manager
+	cfg       *config.Config
+	docker    *docker.Manager
+	envSyncer *EnvSyncer
+	quitFunc  func() // 升级后优雅退出（由 GUI 注入，marshal 到主线程）
 }
 
 // NewExecutor 创建执行器
@@ -43,6 +45,16 @@ func NewExecutor(cfg *config.Config) *Executor {
 // SetDockerManager 注入 Docker 管理器
 func (e *Executor) SetDockerManager(m *docker.Manager) {
 	e.docker = m
+}
+
+// SetEnvSyncer 注入环境文件同步器（env.sync 命令调用其 RunNow）
+func (e *Executor) SetEnvSyncer(s *EnvSyncer) {
+	e.envSyncer = s
+}
+
+// SetQuitFunc 注入退出函数（升级完成后调用以优雅退出受控端，D7）
+func (e *Executor) SetQuitFunc(f func()) {
+	e.quitFunc = f
 }
 
 // ValidateSource 校验命令来源是否经鉴权（任务 4.8）
@@ -143,6 +155,14 @@ func (e *Executor) dispatch(cmd *Command) (string, error) {
 		return e.handleImageLoad(cmd)
 	case "image.sync_public":
 		return e.handleImageSyncPublic(cmd)
+
+	// 环境文件同步（platform-env-ota-realtime D4：手动"环境网盘同步"下发）
+	case "env.sync":
+		return e.handleEnvSync(cmd)
+
+	// 受控端 OTA 自更新（platform-env-ota-realtime D7）
+	case "agent.upgrade":
+		return e.handleUpgrade(cmd)
 
 	// 文件传输（任务 7.4、7.5）
 	case "file.upload", "file.download":

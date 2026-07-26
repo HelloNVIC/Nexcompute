@@ -58,6 +58,9 @@ public class HeartbeatRequest {
     /** 机器码（platform-refinements #1：硬件指纹，注册去重用） */
     private String machineCode;
 
+    /** SMBIOS UUID（platform-env-ota-realtime D14：主板 BIOS 主指纹，注册去重优先匹配） */
+    private String smbiosUUID;
+
     /** 时间戳 */
     private long timestamp;
 

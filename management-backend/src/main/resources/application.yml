@@ -38,11 +38,13 @@ spring:
           min-idle: 2
   servlet:
     multipart:
-      max-file-size: 100MB
-      max-request-size: 200MB
+      max-file-size: 2048MB   # platform-env-ota-realtime D4：环境文件（Docker Desktop Installer.exe ~600MB+）
+      max-request-size: 2048MB
 
 # JWT 配置
 nexcompute:
+  management:
+    version: ${MANAGEMENT_VERSION:0.0.1-SNAPSHOT}  # platform-env-ota-realtime：受控端"关于"展示的管理端版本
   jwt:
     secret: ${JWT_SECRET:dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LWZvci1qd3QtdG9rZW4tc2lnbmluZy1wbGVhc2UtY2hhbmdlLWl0}
     expiration-ms: 86400000  # 24h
@@ -59,6 +61,9 @@ nexcompute:
     ws-reconnect-base-ms: ${WS_RECONNECT_BASE:2000}          # WS 重连基础退避
     ws-reconnect-max-ms: ${WS_RECONNECT_MAX:60000}           # WS 重连最大退避
     file-transfer-chunk-size: ${FILE_CHUNK_SIZE:4194304}     # 文件分块 4MB
+    # OTA 升级超时（platform-env-ota-realtime D7：可按 exe 体积调大）
+    upgrade-command-timeout-ms: ${UPGRADE_COMMAND_TIMEOUT_MS:30000}    # 发命令等回包 300s
+    upgrade-version-wait-timeout-ms: ${UPGRADE_VERSION_WAIT_TIMEOUT_MS:18000}  # 等重启回传新版本 180s
   storage:
     root: ${STORAGE_ROOT:./data/storage}                    # 管理端文件存储根目录
     image-tar-dir: ${STORAGE_ROOT:./data/storage}/images    # 镜像 tar

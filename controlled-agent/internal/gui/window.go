@@ -27,13 +27,14 @@ import (
 
 // App 受控端 GUI 应用
 type App struct {
-	cfg       *config.Config
-	hb        *heartbeat.Reporter
-	wsClient  *wsclient.Client
-	dockerMgr *docker.Manager
-	fyneApp   fyne.App
-	window    fyne.Window
-	tray      *Tray
+	cfg        *config.Config
+	hb         *heartbeat.Reporter
+	wsClient   *wsclient.Client
+	dockerMgr  *docker.Manager
+	fyneApp    fyne.App
+	window     fyne.Window
+	tray       *Tray
+	envSyncFn  func() error // D4：环境网盘同步（由 main 注入 env_syncer.RunNow）
 }
 
 // NewApp 创建 GUI 应用
@@ -48,6 +49,11 @@ func NewApp(cfg *config.Config, hb *heartbeat.Reporter, ws *wsclient.Client, doc
 	a.fyneApp.SetIcon(AppIcon())
 	a.buildWindow()
 	return a
+}
+
+// SetEnvSyncFunc 注入环境网盘同步函数（受控端 GUI 也可手动触发同步，D4）
+func (a *App) SetEnvSyncFunc(fn func() error) {
+	a.envSyncFn = fn
 }
 
 // Run 启动 GUI 事件循环 + 系统托盘（阻塞）
@@ -85,6 +91,16 @@ func (a *App) ensureDefaultAutostart() {
 
 // Quit 退出应用
 func (a *App) Quit() {
+	a.fyneApp.Quit()
+}
+
+// QuitFromUpgrade 升级后优雅退出（可在任意 goroutine 调用，D7）。
+// 与信号处理一致：从非主 goroutine 直接退出托盘与 Fyne 事件循环，
+// app.Run() 返回后进程退出，释放 exe 文件锁供 updater 替换。
+func (a *App) QuitFromUpgrade() {
+	if a.tray != nil {
+		a.tray.Quit()
+	}
 	a.fyneApp.Quit()
 }
 
@@ -262,12 +278,17 @@ func (a *App) buildWindow() {
 		a.confirmQuit()
 	})
 
+	// 关于按钮（platform-env-ota-realtime：展示受控端版本/管理端版本/系统信息）
+	aboutBtn := widget.NewButton("关于", a.showAbout)
+
 	content := container.NewVBox(
 		widget.NewCard("系统状态", "", container.NewVBox(statusLabel, connStatus, instanceLabel)),
 		widget.NewCard("控制端设置", "", container.NewVBox(serverEntry, serverBtn)),
 		widget.NewCard("Docker 环境", "", container.NewVBox(dockerCheckBtn, dockerResultLabel)),
+		// platform-env-ota-realtime D2：受控端环境准备 9 个分步按钮
+		widget.NewCard("受控端环境准备", "", a.buildEnvPrepCard()),
 		widget.NewCard("存储池", "", container.NewVBox(storageRootLabel, storageEntry, pickFolderBtn, storageBtn)),
-		widget.NewCard("系统", "", container.NewVBox(autostartCheck, quitBtn)),
+		widget.NewCard("系统", "", container.NewVBox(autostartCheck, quitBtn, aboutBtn)),
 	)
 
 	w.SetContent(container.NewVScroll(content))

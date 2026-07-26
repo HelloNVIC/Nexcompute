@@ -112,6 +112,37 @@ function Build-Agent {
     Write-Section '受控端：构建 nexcompute-agent.exe'
     if (-not (Test-Cmd go)) { throw '未找到 go，请安装 Go 1.23+ 并加入 PATH' }
 
+    # CGO 需要 C 编译器（gcc）。若当前 PATH 找不到 gcc，尝试常见 mingw 路径自动补 PATH。
+    if (-not (Test-Cmd gcc)) {
+        $candidates = @(
+            'C:\Program Files\mingw-w64\mingw64\bin',
+            'C:\mingw64\bin',
+            'C:\msys64\mingw64\bin',
+            'C:\TDM-GCC-64\bin'
+        )
+        # WinGet 安装的 MinGW（WinLibs / mingw-w64 等包名不一，按 gcc.exe 定位）
+        $wingetRoot = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
+        if (Test-Path $wingetRoot) {
+            Get-ChildItem -Path $wingetRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $gcc = Get-ChildItem -Path $_.FullName -Recurse -Filter 'gcc.exe' -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if ($gcc) { $candidates = @($gcc.DirectoryName) + $candidates }
+            }
+        }
+        $found = $false
+        foreach ($p in $candidates) {
+            if ($p -and (Test-Path (Join-Path $p 'gcc.exe'))) {
+                $env:PATH = "$p;$env:PATH"
+                Write-Ok "已自动加入 PATH：$p（gcc）"
+                $found = $true
+                break
+            }
+        }
+        if (-not $found) {
+            throw '未找到 gcc。Fyne 依赖 CGO，需安装 MinGW-w64（如 winget install BrechtSanders.WinLibs.POSIX.UCRT）并将其 bin 加入 PATH'
+        }
+    }
+
     # 停止本机正在运行的受控端进程（否则 exe 被占用，go build 覆盖会失败）
     Write-Section '停止本机受控端进程'
     $procs = Get-Process -Name 'nexcompute-agent' -ErrorAction SilentlyContinue
@@ -158,8 +189,25 @@ function Build-Agent {
         # CGO 构建（Fyne 依赖）
         Write-Section 'CGO 构建 nexcompute-agent.exe'
         $env:CGO_ENABLED = '1'
-        Write-Info 'CGO_ENABLED=1 go build ./cmd/nexcompute-agent'
-        & go build -o 'nexcompute-agent.exe' './cmd/nexcompute-agent'
+
+        # D1：经 ldflags 注入版本号至 internal/version.Version
+        # 优先 git tag（HEAD 恰指向 tag），无 tag 用 Makefile VERSION，再回退 0.1.0
+        $agentVersion = $null
+        try {
+            $tag = git describe --tags --exact-match 2>$null
+            if ($LASTEXITCODE -eq 0 -and $tag) { $agentVersion = $tag.Trim() }
+        } catch { }
+        if (-not $agentVersion) {
+            $verLine = Get-Content 'Makefile' -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match '^\s*VERSION\s*:=\s*(.+)$' } |
+                Select-Object -First 1
+            if ($verLine -and $Matches[1]) { $agentVersion = $Matches[1].Trim() }
+        }
+        if (-not $agentVersion) { $agentVersion = '0.1.0' }
+        $ldflags = "-X github.com/nexcompute/controlled-agent/internal/version.Version=$agentVersion"
+        Write-Info "agentVersion=$agentVersion（来源：$(if ($tag) { 'git tag' } else { 'Makefile' })）"
+        Write-Info "CGO_ENABLED=1 go build -ldflags `"$ldflags`" ./cmd/nexcompute-agent"
+        & go build -ldflags $ldflags -o 'nexcompute-agent.exe' './cmd/nexcompute-agent'
         Assert-Exit '受控端构建'
 
         $exe = Get-Item 'nexcompute-agent.exe'

@@ -1,5 +1,6 @@
 package com.nexcompute.management.service;
 
+import com.nexcompute.management.audit.Audited;
 import com.nexcompute.management.common.BusinessException;
 import com.nexcompute.management.common.ErrorCode;
 import com.nexcompute.management.domain.PermissionMatrix;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -77,8 +79,9 @@ public class PermissionService {
     }
 
     /**
-     * 更新权限矩阵（任务 2.3）
+     * 更新权限矩阵（任务 2.3；D13：记审计）
      */
+    @Audited(action = "PERMISSION_UPDATE", targetType = "PERMISSION")
     @Transactional
     @CacheEvict(value = "permission", allEntries = true)
     public void updateMatrix(UserRole role, String moduleCode,
@@ -96,6 +99,59 @@ public class PermissionService {
         matrixRepository.save(matrix);
         log.info("[Permission] 权限矩阵已更新: {}:{} view={} edit={} delete={}",
                 role, moduleCode, canView, canEdit, canDelete);
+    }
+
+    // ===== D13：恢复默认权限矩阵（与 V2__access_control.sql 种子一致） =====
+
+    private static final Set<String> STUDENT_VIEW = Set.of(
+            "physical-instance", "container", "image", "storage-pool", "ticket",
+            "group", "announcement", "monitoring", "notification");
+    private static final Set<String> STUDENT_EDIT_DELETE = Set.of(
+            "container", "image", "storage-pool", "ticket");
+    private static final Set<String> MENTOR_VIEW = Set.of(
+            "physical-instance", "container", "image", "storage-pool", "ticket",
+            "group", "announcement", "monitoring", "notification");
+    private static final Set<String> MENTOR_EDIT = Set.of(
+            "container", "image", "storage-pool", "ticket", "group");
+    private static final Set<String> MENTOR_DELETE = Set.of(
+            "container", "image", "storage-pool", "ticket");
+
+    /**
+     * 恢复平台默认权限矩阵（D13）：按 V2 种子 upsert（既有行原地更新，避免 deleteAll+insert
+     * 触发唯一约束 permission_matrix(role, module_id) 冲突），记审计。
+     */
+    @Audited(action = "PERMISSION_RESET_DEFAULT", targetType = "PERMISSION")
+    @Transactional
+    @CacheEvict(value = "permission", allEntries = true)
+    public void resetToDefault() {
+        List<PermissionModule> modules = moduleRepository.findAll();
+        for (PermissionModule m : modules) {
+            upsert(UserRole.ADMIN, m.getId(), true, true, true);
+            upsert(UserRole.STUDENT, m.getId(),
+                    STUDENT_VIEW.contains(m.getCode()),
+                    STUDENT_EDIT_DELETE.contains(m.getCode()),
+                    STUDENT_EDIT_DELETE.contains(m.getCode()));
+            upsert(UserRole.MENTOR, m.getId(),
+                    MENTOR_VIEW.contains(m.getCode()),
+                    MENTOR_EDIT.contains(m.getCode()),
+                    MENTOR_DELETE.contains(m.getCode()));
+        }
+        // 删除多余的模块行（如历史上模块已删除但遗留矩阵记录），保持与当前模块集一致
+        Set<Long> moduleIds = modules.stream().map(PermissionModule::getId).collect(Collectors.toSet());
+        matrixRepository.findAll().stream()
+                .filter(pm -> !moduleIds.contains(pm.getModuleId()))
+                .forEach(matrixRepository::delete);
+        log.info("[Permission] 权限矩阵已恢复为平台默认配置");
+    }
+
+    /** upsert：存在则更新，不存在则插入（避免唯一约束冲突） */
+    private void upsert(UserRole role, Long moduleId, boolean canView, boolean canEdit, boolean canDelete) {
+        PermissionMatrix m = matrixRepository.findByRoleAndModuleId(role, moduleId)
+                .orElseGet(() -> PermissionMatrix.builder().role(role).moduleId(moduleId).build());
+        m.setCanView(canView);
+        m.setCanEdit(canEdit);
+        m.setCanDelete(canDelete);
+        matrixRepository.save(m);
     }
 
     private PermissionMatrixDto.Perm toPerm(PermissionMatrix m) {

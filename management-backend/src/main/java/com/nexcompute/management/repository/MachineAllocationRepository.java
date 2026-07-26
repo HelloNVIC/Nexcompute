@@ -17,6 +17,9 @@ public interface MachineAllocationRepository extends JpaRepository<MachineAlloca
 
     List<MachineAllocation> findByGroupId(Long groupId);
 
+    /** 按实例+课题组查找分配（撤销课题组分配用） */
+    List<MachineAllocation> findByInstanceIdAndGroupId(Long instanceId, Long groupId);
+
     boolean existsByInstanceIdAndUserId(Long instanceId, Long userId);
 
     /** 按 实例+学生 查找分配（platform-refinements 8.2/8.3：upsert 与内存上限校验） */

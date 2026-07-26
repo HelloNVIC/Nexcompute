@@ -99,6 +99,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/PermissionMatrixView.vue'),
         meta: { title: '权限矩阵配置', roles: ['ADMIN'] },
       },
+      // platform-env-ota-realtime D4/D7：受控端环境文件 + OTA 升级
+      {
+        path: 'admin/env-files',
+        name: 'admin-env-files',
+        component: () => import('@/views/admin/EnvFilesView.vue'),
+        meta: { title: '受控端环境', roles: ['ADMIN'] },
+      },
+      {
+        path: 'admin/agent-upgrade',
+        name: 'admin-agent-upgrade',
+        component: () => import('@/views/admin/AgentUpgradeView.vue'),
+        meta: { title: '受控端升级', roles: ['ADMIN'] },
+      },
       // 公告
       {
         path: 'announcements',

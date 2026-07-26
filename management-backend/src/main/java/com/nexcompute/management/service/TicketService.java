@@ -31,12 +31,12 @@ public class TicketService {
     private final NotificationService notificationService;
 
     /**
-     * 学生提交工单（任务 12.2）
+     * 学生提交工单（任务 12.2；D11：联系方式）
      * 五种类型，直接派给管理员
      */
     @Audited(action = "TICKET_CREATE", targetType = "TICKET", targetIdExpr = "#result.id")
     @Transactional
-    public Ticket createTicket(String title, TicketType type, String content) {
+    public Ticket createTicket(String title, TicketType type, String content, String contact) {
         Long userId = SecurityUtils.getCurrentUserId();
         User submitter = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
@@ -51,15 +51,18 @@ public class TicketService {
                 .title(title)
                 .type(type)
                 .content(content)
+                .contact(contact) // D11：联系方式（默认前端填账户手机号，可改）
                 .submitterId(userId)
                 .submitterName(submitter.getRealName())
                 .groupId(submitter.getGroupId())
                 .groupName(groupName)
+                // ticket_no 列 NOT NULL + 唯一索引，先写唯一占位，拿到 id 后更新为正式编号
+                .ticketNo("TMP-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16))
                 .status("PENDING")
                 .build();
         ticket = ticketRepository.save(ticket);
 
-        // platform-refinements #3：生成唯一编号 TK{yyyyMMdd}-{6位id}
+        // platform-refinements #3：生成唯一编号 TK{yyyyMMdd}-{6位id}，更新占位为正式编号
         String ticketNo = "TK" + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)
                 + "-" + String.format("%06d", ticket.getId());
         ticket.setTicketNo(ticketNo);

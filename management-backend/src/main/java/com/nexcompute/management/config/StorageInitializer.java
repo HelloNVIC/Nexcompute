@@ -43,10 +43,18 @@ public class StorageInitializer {
         if (storage.getMigrationStagingDir() == null || storage.getMigrationStagingDir().isBlank()) {
             storage.setMigrationStagingDir(root + "/migration");
         }
+        if (storage.getEnvDir() == null || storage.getEnvDir().isBlank()) {
+            storage.setEnvDir(root + "/env");
+        }
+        if (storage.getAgentUpgradeDir() == null || storage.getAgentUpgradeDir().isBlank()) {
+            storage.setAgentUpgradeDir(root + "/agent-upgrade");
+        }
 
         createDir(storage.getImageTarDir(), "镜像 tar");
         createDir(storage.getPublicImageDir(), "公共镜像库");
         createDir(storage.getMigrationStagingDir(), "迁移中转");
+        createDir(storage.getEnvDir(), "受控端环境文件");
+        createDir(storage.getAgentUpgradeDir(), "受控端 OTA 升级");
         createDir(root + "/tmp", "临时文件");
 
         log.info("[Storage] 文件存储根目录: {}", root);

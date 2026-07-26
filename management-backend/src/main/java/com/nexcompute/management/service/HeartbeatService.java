@@ -84,6 +84,9 @@ public class HeartbeatService {
         extractGpuInfo(request.getStatus(), instance);
         if (request.getAgentVersion() != null) instance.setAgentVersion(request.getAgentVersion());
         if (request.getStorageRoot() != null) instance.setStorageRoot(request.getStorageRoot());
+        // D14：同步 SMBIOS UUID（已注册实例补充主指纹）
+        String normUuid = normalizeSmbiosUUID(request.getSmbiosUUID());
+        if (normUuid != null) instance.setSmbiosUuid(normUuid);
 
         // 连接模式声明（任务 4.5）
         if (request.getConnectMode() != null) {
@@ -165,34 +168,25 @@ public class HeartbeatService {
 
     /**
      * 首次心跳自动注册（任务 6.1）：自动生成唯一编号
-     * platform-refinements #1：按 MAC+机器码去重--同一机器重复注册复用原编号与 token。
+     * platform-env-ota-realtime D14：去重匹配优先 SMBIOS UUID，空/全 0 回退 MachineGuid 再回退 MAC。
      */
     private PhysicalInstance autoRegister(HeartbeatRequest request) {
         String mac = request.getMac();
         String machineCode = request.getMachineCode();
-        // 硬件指纹去重：已注册过的机器复用原实例（编号/token 不变）
+        String smbiosUUID = normalizeSmbiosUUID(request.getSmbiosUUID());
+
+        // 1. 优先按 SMBIOS UUID 去重（换网卡但主板不变时复用）
+        if (smbiosUUID != null) {
+            var existing = instanceRepository.findBySmbiosUuid(smbiosUUID);
+            if (existing.isPresent()) {
+                return reuseInstance(existing.get(), request, smbiosUUID, "uuid=" + smbiosUUID);
+            }
+        }
+        // 2. 回退：MAC + MachineGuid
         if (mac != null && !mac.isBlank() && machineCode != null && !machineCode.isBlank()) {
             var existing = instanceRepository.findByMacAndMachineCode(mac, machineCode);
             if (existing.isPresent()) {
-                PhysicalInstance inst = existing.get();
-                inst.setStatus("ONLINE");
-                inst.setLastHeartbeat(Instant.now());
-                inst.setLastStatus(serializeStatus(request.getStatus()));
-                if (request.getMachineName() != null) inst.setMachineName(request.getMachineName());
-                if (request.getOsInfo() != null) inst.setOsInfo(request.getOsInfo());
-                inst = instanceRepository.save(inst);
-                // 复用既有凭证（若无则补建）
-                final Long reuseInstId = inst.getId();
-                AgentCredential cred = credentialRepository.findByInstanceId(reuseInstId)
-                        .orElseGet(() -> {
-                            AgentCredential c = AgentCredential.builder()
-                                    .instanceId(reuseInstId)
-                                    .token(UUID.randomUUID().toString().replace("-", ""))
-                                    .revoked(false).build();
-                            return credentialRepository.save(c);
-                        });
-                log.info("[Heartbeat] 已注册机器按指纹复用: number={} mac={}", inst.getInstanceNumber(), mac);
-                return inst;
+                return reuseInstance(existing.get(), request, smbiosUUID, "mac=" + mac);
             }
         }
 
@@ -209,6 +203,7 @@ public class HeartbeatService {
                 .storageRoot(request.getStorageRoot())
                 .mac(mac)
                 .machineCode(machineCode)
+                .smbiosUuid(smbiosUUID)
                 .build();
         instance = instanceRepository.save(instance);
 
@@ -220,9 +215,45 @@ public class HeartbeatService {
                 .build();
         credentialRepository.save(credential);
 
-        log.info("[Heartbeat] 新受控端已注册: number={} id={} token={} mac={}",
-                instance.getInstanceNumber(), instance.getId(), credential.getToken(), mac);
+        log.info("[Heartbeat] 新受控端已注册: number={} id={} token={} mac={} uuid={}",
+                instance.getInstanceNumber(), instance.getId(), credential.getToken(), mac, smbiosUUID);
         return instance;
+    }
+
+    /** 复用既有实例（按指纹命中），更新在线状态与指纹，复用凭证（无则补建） */
+    private PhysicalInstance reuseInstance(PhysicalInstance inst, HeartbeatRequest request,
+                                           String smbiosUUID, String matchKey) {
+        inst.setStatus("ONLINE");
+        inst.setLastHeartbeat(Instant.now());
+        inst.setLastStatus(serializeStatus(request.getStatus()));
+        if (request.getMachineName() != null) inst.setMachineName(request.getMachineName());
+        if (request.getOsInfo() != null) inst.setOsInfo(request.getOsInfo());
+        if (smbiosUUID != null) inst.setSmbiosUuid(smbiosUUID);
+        if (request.getMac() != null) inst.setMac(request.getMac());
+        if (request.getMachineCode() != null) inst.setMachineCode(request.getMachineCode());
+        inst = instanceRepository.save(inst);
+        // 复用既有凭证（若无则补建）
+        final Long reuseInstId = inst.getId();
+        credentialRepository.findByInstanceId(reuseInstId)
+                .orElseGet(() -> {
+                    AgentCredential c = AgentCredential.builder()
+                            .instanceId(reuseInstId)
+                            .token(UUID.randomUUID().toString().replace("-", ""))
+                            .revoked(false).build();
+                    return credentialRepository.save(c);
+                });
+        log.info("[Heartbeat] 已注册机器按指纹复用: number={} {}", inst.getInstanceNumber(), matchKey);
+        return inst;
+    }
+
+    /** SMBIOS UUID 规范化：去空白；空或全 0 返回 null（回退降级匹配） */
+    private static String normalizeSmbiosUUID(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isBlank()) return null;
+        String digits = v.replace("-", "");
+        if (digits.chars().allMatch(c -> c == '0')) return null; // 全 0
+        return v;
     }
 
     /**

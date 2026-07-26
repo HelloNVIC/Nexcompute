@@ -3,6 +3,20 @@
 ## Purpose
 TBD - created by archiving change build-nexcompute-platform. Update Purpose after archive.
 ## Requirements
+### Requirement: 系统信息展示与编辑权限
+
+系统信息 SHALL 对所有角色展示。导师与学生 SHALL 能直接查看系统信息，不再提示"仅管理员可修改系统信息"。仅管理员 SHALL 能修改系统信息。
+
+#### Scenario: 导师与学生查看系统信息
+- **WHEN** 导师或学生进入系统信息页面
+- **THEN** 系统直接展示系统信息字段
+- **AND** 不显示"仅管理员可修改系统信息"提示
+
+#### Scenario: 仅管理员可修改
+- **WHEN** 非管理员用户进入系统信息页面
+- **THEN** 系统信息字段以只读形式展示
+- **AND** 用户不可编辑系统信息字段
+
 ### Requirement: 三角色体系
 
 系统 SHALL 支持三种用户角色：管理员、导师、学生。管理员可设置一切用户（创建、修改角色、禁用等）。
@@ -17,13 +31,24 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 
 ### Requirement: 权限矩阵配置
 
-管理员 SHALL 能在「用户权限矩阵配置」中对每个角色 × 每个模块勾选「查看 / 编辑 / 删除」细粒度权限。前端按矩阵渲染菜单与按钮，后端按矩阵鉴权。
+管理员 SHALL 能在「用户权限矩阵配置」中对每个角色 × 每个模块勾选「查看 / 编辑 / 删除」细粒度权限。前端按矩阵渲染菜单与按钮，后端按矩阵鉴权。管理员修改权限矩阵后 SHALL 经确认方生效。管理员 SHALL 能通过「恢复默认」按钮将权限矩阵恢复为平台默认配置。
 
 #### Scenario: 管理员配置权限矩阵
 - **WHEN** 管理员在权限矩阵配置中对某角色在某模块勾选操作权限
 - **THEN** 系统保存权限矩阵配置
 - **AND** 该角色用户的前端菜单与按钮按配置渲染
 - **AND** 该角色用户的后端 API 调用按配置鉴权
+
+#### Scenario: 修改需确认生效
+- **WHEN** 管理员修改权限矩阵并触发保存
+- **THEN** 系统弹出确认提示要求确认修改
+- **AND** 仅在管理员确认后方生效保存
+- **AND** 未确认则不修改既有权限矩阵
+
+#### Scenario: 恢复默认
+- **WHEN** 管理员点击「恢复默认」按钮并确认
+- **THEN** 系统将权限矩阵恢复为平台默认配置
+- **AND** 操作记入审计日志
 
 #### Scenario: 无权限操作被拒
 - **WHEN** 用户尝试执行权限矩阵中未授予的操作

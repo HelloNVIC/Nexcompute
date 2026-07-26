@@ -34,6 +34,8 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = data.user
     localStorage.setItem('nex_token', data.token)
     localStorage.setItem('nex_user', JSON.stringify(data.user))
+    // D9：新会话重置"下次再说"公告忽略列表（本会话已忽略的不再跨登录保留）
+    localStorage.removeItem('dismissedAnnouncements')
   }
 
   function setToken(t: string): void {

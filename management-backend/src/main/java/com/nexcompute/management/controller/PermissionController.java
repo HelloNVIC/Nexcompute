@@ -39,6 +39,13 @@ public class PermissionController {
         return ApiResponse.success();
     }
 
+    /** 恢复默认权限矩阵（D13） */
+    @PostMapping("/reset-default")
+    public ApiResponse<Void> resetDefault() {
+        permissionService.resetToDefault();
+        return ApiResponse.success();
+    }
+
     /** 用户信息必填项配置（platform-refinements #5） */
     @GetMapping("/user-field-config")
     public ApiResponse<UserFieldConfig> getFieldConfig() {

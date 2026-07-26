@@ -17,6 +17,8 @@ export const permissionApi = {
   getMatrix: () => http.get<PermissionMatrixItem[]>('/admin/permissions'),
   update: (data: { role: string; moduleCode: string; canView: boolean; canEdit: boolean; canDelete: boolean }) =>
     http.put('/admin/permissions', data),
+  // D13：恢复默认权限矩阵
+  resetDefault: () => http.post('/admin/permissions/reset-default'),
   // 用户信息必填项配置（platform-refinements #5）
   getFieldConfig: () =>
     http.get<{ realName: boolean; studentId: boolean; email: boolean; phone: boolean; groupId: boolean }>(

@@ -160,6 +160,12 @@ func configPath() string {
 // osExecutablePath 可替换的 os.Executable（便于测试）
 var osExecutablePath = os.Executable
 
+// EnvDir 受控端本地 Env 文件夹（存储池根目录下 Env 子目录，D4）。
+// 环境准备文件经 MD5 增量同步至此。
+func (c *Config) EnvDir() string {
+	return filepath.Join(c.StorageRoot, "Env")
+}
+
 func wsURLFromHTTP(httpURL string) string {
 	if len(httpURL) > 4 && httpURL[:5] == "https" {
 		return "wss" + httpURL[5:]

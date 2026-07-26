@@ -1,6 +1,15 @@
 import { useAuthStore } from '@/stores/auth'
 
-export type SseEventType = 'monitoring' | 'notification' | 'ticket' | 'container' | 'storage-pool'
+export type SseEventType =
+  | 'monitoring'
+  | 'notification'
+  | 'ticket'
+  | 'container'
+  | 'storage-pool'
+  // platform-env-ota-realtime D8：右下角实时 Toast 事件
+  | 'container.changed'
+  | 'ticket.changed'
+  | 'storage.changed'
 
 type EventHandler = (data: unknown) => void
 

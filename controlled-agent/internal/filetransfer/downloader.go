@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 )
@@ -148,8 +149,10 @@ func (d *Downloader) initDownload(transferID, sourcePath, fileType string) (*dow
 }
 
 func (d *Downloader) downloadChunk(transferID string, index int) (*chunkData, error) {
-	req, _ := http.NewRequest("GET",
-		fmt.Sprintf("%s/api/agent/file/download/chunk?transferId=%s&chunkIndex=%d", d.serverURL, transferID, index), nil)
+	// transferId 经 URL 编码，避免含空格/特殊字符（如 env 文件名）破坏 URL 致返回 HTML 错误页
+	u := fmt.Sprintf("%s/api/agent/file/download/chunk?transferId=%s&chunkIndex=%d",
+		d.serverURL, url.QueryEscape(transferID), index)
+	req, _ := http.NewRequest("GET", u, nil)
 	d.setAuth(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -162,7 +165,8 @@ func (d *Downloader) downloadChunk(transferID string, index int) (*chunkData, er
 		Data chunkData `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		// 响应非 JSON（多为 HTML 错误页 / 鉴权重定向），附状态码便于定位
+		return nil, fmt.Errorf("解析下载块 %d 响应失败 (status=%d): %w", index, resp.StatusCode, err)
 	}
 	// platform-refinements #5：管理端返回错误时不应静默写空数据
 	if result.Code != 0 {
@@ -172,8 +176,9 @@ func (d *Downloader) downloadChunk(transferID string, index int) (*chunkData, er
 }
 
 func (d *Downloader) ackChunk(transferID string, index int) {
-	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("%s/api/agent/file/download/ack?transferId=%s&chunkIndex=%d", d.serverURL, transferID, index), nil)
+	u := fmt.Sprintf("%s/api/agent/file/download/ack?transferId=%s&chunkIndex=%d",
+		d.serverURL, url.QueryEscape(transferID), index)
+	req, _ := http.NewRequest("POST", u, nil)
 	d.setAuth(req)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

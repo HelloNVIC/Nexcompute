@@ -14,7 +14,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 通知消息生成服务（任务 13.5、13.6、13.8）
@@ -47,7 +49,41 @@ public class NotificationService {
 
         // 通过 SSE 实时推送（任务 13.8，用户离线时推送静默失败，消息已入库累积）
         sseService.pushNotification(userId, msg);
+        // platform-env-ota-realtime D8：右下角实时 Toast（精简事件，容器/工单/存储池变动）
+        pushToast(userId, type, title, content);
         log.debug("[Notification] 通知已生成: user={} type={} title={}", userId, type, title);
+    }
+
+    /** 推送右下角实时 Toast 事件（D8）：容器/工单/存储池变动映射为 *.changed 事件 */
+    private void pushToast(Long userId, NotificationType type, String title, String content) {
+        String eventType = toastEventType(type);
+        if (eventType == null) {
+            return; // ANNOUNCEMENT 不弹 Toast（登录公告中央弹窗处理）
+        }
+        Map<String, Object> toast = new LinkedHashMap<>();
+        toast.put("type", eventType);
+        toast.put("title", title);
+        toast.put("message", content);
+        toast.put("link", toastLink(type));
+        sseService.pushToUser(userId, eventType, toast);
+    }
+
+    private static String toastEventType(NotificationType type) {
+        return switch (type) {
+            case CONTAINER -> "container.changed";
+            case TICKET -> "ticket.changed";
+            case STORAGE_POOL -> "storage.changed";
+            default -> null;
+        };
+    }
+
+    private static String toastLink(NotificationType type) {
+        return switch (type) {
+            case CONTAINER -> "/containers";
+            case TICKET -> "/tickets";
+            case STORAGE_POOL -> "/storage-pools";
+            default -> null;
+        };
     }
 
     /** 批量通知（如公告定向发布） */
@@ -63,6 +99,13 @@ public class NotificationService {
      */
     public List<NotificationMessage> getUnread(Long userId) {
         return messageRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId);
+    }
+
+    /** 某类型的未读通知（D9：登录公告未读判定） */
+    public List<NotificationMessage> getUnreadByType(Long userId, NotificationType type) {
+        return messageRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId).stream()
+                .filter(m -> m.getType() == type)
+                .toList();
     }
 
     /**

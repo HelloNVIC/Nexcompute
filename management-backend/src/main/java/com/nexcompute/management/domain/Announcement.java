@@ -53,6 +53,17 @@ public class Announcement {
     @Column(name = "author_name", length = 100)
     private String authorName;
 
+    /**
+     * GROUP 多选课题组 ID 集合（D10，非持久化，由 service 填充）。
+     * 旧单值 targetId 已迁移至 announcement_group，对 GROUP 仅以此集合判定可见性。
+     */
+    @Transient
+    private java.util.List<Long> targetGroupIds;
+
+    /** 课题组名集合（D10，非持久化，列表展示用） */
+    @Transient
+    private java.util.List<String> targetGroupNames;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

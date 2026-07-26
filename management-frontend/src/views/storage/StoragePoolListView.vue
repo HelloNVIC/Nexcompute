@@ -19,6 +19,8 @@ const createForm = reactive({ instanceId: undefined as number | undefined, proje
 
 const migrateVisible = ref(false)
 const migrateForm = reactive({ poolId: 0, targetInstanceId: undefined as number | undefined })
+// 迁移：记录源池所在物理机，目标实例下拉排除同一物理机
+const migrateSourceInstanceId = ref<number | undefined>()
 
 // 文件管理（platform-refinements #3）
 const filesVisible = ref(false)
@@ -71,6 +73,7 @@ async function handleCreate(): Promise<void> {
 function showMigrate(pool: StoragePool): void {
   migrateForm.poolId = pool.id
   migrateForm.targetInstanceId = undefined
+  migrateSourceInstanceId.value = pool.instanceId
   migrateVisible.value = true
 }
 
@@ -325,7 +328,11 @@ function formatFileSize(bytes: number): string {
       <a-form layout="vertical">
         <a-form-item label="目标物理实例">
           <a-select v-model:value="migrateForm.targetInstanceId" placeholder="选择目标实例">
-            <a-select-option v-for="i in instances" :key="i.id" :value="i.id">
+            <a-select-option
+              v-for="i in instances.filter((x) => x.id !== migrateSourceInstanceId)"
+              :key="i.id"
+              :value="i.id"
+            >
               {{ i.instanceNumber }} - {{ i.machineName }}
             </a-select-option>
           </a-select>

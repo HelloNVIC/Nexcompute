@@ -215,6 +215,11 @@ public class StoragePoolService {
         PhysicalInstance targetInstance = instanceRepository.findById(targetInstanceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
 
+        // 禁止迁移到同一物理机（无意义，且会触发源/目标路径冲突）
+        if (targetInstanceId.equals(pool.getInstanceId())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "不能迁移到同一物理机");
+        }
+
         // 前置检查：无运行容器使用此池
         List<Container> running = containerRepository.findByStoragePoolIdAndStatus(poolId, "RUNNING");
         if (!running.isEmpty()) {

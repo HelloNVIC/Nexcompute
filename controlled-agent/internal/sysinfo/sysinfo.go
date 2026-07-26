@@ -143,15 +143,18 @@ func CollectIPAddresses() []string {
 	return result
 }
 
-// MachineFingerprint 机器指纹（platform-refinements #1：MAC + 机器码，用于注册去重）
+// MachineFingerprint 机器指纹（platform-refinements #1：MAC + 机器码；D14：增 SMBIOS UUID 主指纹）
 type MachineFingerprint struct {
-	MAC        string `json:"mac"`
+	MAC         string `json:"mac"`
 	MachineCode string `json:"machineCode"`
+	SmbiosUUID  string `json:"smbiosUUID"` // D14：主板 BIOS UUID，主指纹；空/全 0 时回退
 }
 
-// CollectMachineFingerprint 采集 MAC（首个非虚拟网卡）+ 机器码（host HostID）
+// CollectMachineFingerprint 采集 SMBIOS UUID（主指纹）+ MAC + 机器码（辅助指纹，D14）
 func CollectMachineFingerprint() MachineFingerprint {
-	fp := MachineFingerprint{}
+	fp := MachineFingerprint{
+		SmbiosUUID: collectSmbiosUUID(),
+	}
 	ifaces, err := net.Interfaces()
 	if err == nil {
 		for _, ifc := range ifaces {
@@ -173,6 +176,30 @@ func CollectMachineFingerprint() MachineFingerprint {
 		fp.MachineCode = hi.HostID
 	}
 	return fp
+}
+
+// collectSmbiosUUID 采集主板 BIOS SMBIOS UUID（D14 主指纹）。
+// 经 wmic csproduct get UUID；非 Windows 或失败/全 0 返回空串（回退 MachineGuid/MAC）。
+func collectSmbiosUUID() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := executil.HideWindow(exec.CommandContext(ctx, "wmic", "csproduct", "get", "UUID"))
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.EqualFold(line, "UUID") {
+			continue
+		}
+		// 全 0 视为缺失（虚拟机/部分主板）
+		if strings.Count(strings.ReplaceAll(line, "-", ""), "0") == len(strings.ReplaceAll(line, "-", "")) {
+			return ""
+		}
+		return line
+	}
+	return ""
 }
 
 // collectDiskPartitions 采集各磁盘分区存储空间（任务 2）

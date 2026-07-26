@@ -56,7 +56,6 @@ async function save(): Promise<void> {
         <a-form-item v-if="isOwner">
           <a-button type="primary" :loading="saving" @click="save">保存</a-button>
         </a-form-item>
-        <a-alert v-else type="info" message="仅管理员可修改系统信息" show-icon />
       </a-form>
     </a-card>
   </div>

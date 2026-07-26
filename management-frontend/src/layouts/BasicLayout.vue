@@ -18,6 +18,8 @@ import {
 import { useAuthStore, type UserRole } from '@/stores/auth'
 import { closeSseClient } from '@/utils/sse'
 import NotificationInbox from '@/components/NotificationInbox.vue'
+import RealtimeToast from '@/components/RealtimeToast.vue'
+import AnnouncementLoginModal from '@/components/AnnouncementLoginModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -51,6 +53,9 @@ const menus = computed<MenuItem[]>(() => {
     // platform-refinements 11.5：受控端管理密码统一设置入口
     { key: '/admin/local-admin-password', label: '受控端管理密码', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
     { key: '/admin/permissions', label: '权限矩阵配置', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
+    // platform-env-ota-realtime D4/D7：受控端环境文件 + OTA 升级
+    { key: '/admin/env-files', label: '受控端环境', icon: DesktopOutlined, roles: ['ADMIN'] },
+    { key: '/admin/agent-upgrade', label: '受控端升级', icon: DesktopOutlined, roles: ['ADMIN'] },
     { key: '/announcements', label: '公告', icon: NotificationOutlined, roles: ['STUDENT', 'MENTOR'] },
     { key: '/announcements/manage', label: '公告管理', icon: NotificationOutlined, roles: ['ADMIN'] },
     { key: '/profile', label: '用户信息', icon: UserOutlined },
@@ -142,6 +147,10 @@ const roleLabel: Record<UserRole, string> = {
         <RouterView />
       </a-layout-content>
     </a-layout>
+    <!-- platform-env-ota-realtime D8：右下角实时变动 Toast（订阅 SSE，无 UI） -->
+    <RealtimeToast />
+    <!-- D9：导师/管理员登录公告中央弹窗 -->
+    <AnnouncementLoginModal />
   </a-layout>
 </template>
 

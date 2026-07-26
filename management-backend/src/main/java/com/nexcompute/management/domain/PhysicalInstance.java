@@ -71,6 +71,10 @@ public class PhysicalInstance {
     @Column(name = "machine_code", length = 200)
     private String machineCode;
 
+    /** SMBIOS UUID（platform-env-ota-realtime D14：主板 BIOS 主指纹，注册去重优先匹配） */
+    @Column(name = "smbios_uuid", length = 100)
+    private String smbiosUuid;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

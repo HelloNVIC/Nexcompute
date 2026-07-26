@@ -50,5 +50,17 @@ export const allocationApi = {
     http.get<{ studentName: string; instanceId: number; runningContainers: Array<{ id: number; name: string }>; storagePools: Array<{ id: number; poolName: string }> }>(
       `/allocations/machines/${id}/impact`,
     ),
+  /** 撤销课题组在指定实例上的分配影响检查 */
+  groupImpact: (instanceId: number, groupId: number) =>
+    http.get<{
+      groupName: string
+      instanceId: number
+      memberCount: number
+      runningContainers: Array<{ id: number; name: string; ownerId: number }>
+      storagePools: Array<{ id: number; poolName: string; ownerId: number }>
+    }>(`/allocations/groups/${instanceId}/${groupId}/impact`),
+  /** 撤销课题组在指定实例上的分配 */
+  deallocateGroup: (instanceId: number, groupId: number) =>
+    http.delete<number>(`/allocations/groups/${instanceId}/${groupId}`),
   myMachines: () => http.get<MachineAllocation[]>('/allocations/machines/my'),
 }

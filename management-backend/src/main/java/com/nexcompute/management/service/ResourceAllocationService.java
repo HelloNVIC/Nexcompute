@@ -222,6 +222,58 @@ public class ResourceAllocationService {
         allocationRepository.deleteById(id);
     }
 
+    /**
+     * 撤销课题组在指定实例上的分配（删除该组所有成员在此实例上的分配记录）。
+     */
+    @Audited(action = "MACHINE_DEALLOCATE_GROUP", targetType = "MACHINE_ALLOCATION", targetIdExpr = "#instanceId")
+    @Transactional
+    public int deallocateGroup(Long instanceId, Long groupId) {
+        List<MachineAllocation> rows = allocationRepository.findByInstanceIdAndGroupId(instanceId, groupId);
+        if (rows.isEmpty()) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "该课题组在此实例上无分配记录");
+        }
+        allocationRepository.deleteAll(rows);
+        log.info("[Allocation] 撤销课题组 {} 在实例 {} 上的分配（{} 条）", groupId, instanceId, rows.size());
+        return rows.size();
+    }
+
+    /**
+     * 撤销课题组分配的影响：该组所有成员在此实例上的运行容器与存储池（撤销前提示用）。
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> groupAllocationImpact(Long instanceId, Long groupId) {
+        String groupName = groupRepository.findById(groupId)
+                .map(ResearchGroup::getName).orElse("课题组#" + groupId);
+        List<MachineAllocation> rows = allocationRepository.findByInstanceIdAndGroupId(instanceId, groupId);
+        Set<Long> memberIds = new HashSet<>();
+        for (MachineAllocation m : rows) memberIds.add(m.getUserId());
+
+        List<Map<String, Object>> running = containerRepository.findByInstanceId(instanceId).stream()
+                .filter(c -> memberIds.contains(c.getOwnerId()) && "RUNNING".equals(c.getStatus()))
+                .map(c -> {
+                    Map<String, Object> cm = new LinkedHashMap<>();
+                    cm.put("id", c.getId());
+                    cm.put("name", c.getName());
+                    cm.put("ownerId", c.getOwnerId());
+                    return cm;
+                }).toList();
+        List<Map<String, Object>> pools = poolRepository.findByInstanceId(instanceId).stream()
+                .filter(p -> memberIds.contains(p.getOwnerId()))
+                .map(p -> {
+                    Map<String, Object> pm = new LinkedHashMap<>();
+                    pm.put("id", p.getId());
+                    pm.put("poolName", p.getPoolName());
+                    pm.put("ownerId", p.getOwnerId());
+                    return pm;
+                }).toList();
+        return Map.of(
+                "groupName", groupName,
+                "instanceId", instanceId,
+                "memberCount", memberIds.size(),
+                "runningContainers", running,
+                "storagePools", pools);
+    }
+
     /** 学生查看分配给自己的机器 */
     public List<MachineAllocation> myAllocatedMachines() {
         Long userId = SecurityUtils.getCurrentUserId();
