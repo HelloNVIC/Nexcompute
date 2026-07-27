@@ -11,5 +11,7 @@ public interface ImageShareRepository extends JpaRepository<ImageShare, Long> {
 
     List<ImageShare> findBySharedToUserId(Long userId);
 
+    List<ImageShare> findByImageId(Long imageId);
+
     boolean existsByImageIdAndSharedToUserId(Long imageId, Long userId);
 }

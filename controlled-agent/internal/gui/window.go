@@ -192,16 +192,24 @@ func (a *App) buildWindow() {
 			dialog.ShowError(errors.New("路径不能为空"), w)
 			return
 		}
+		// 5.2 选根目录路径判非 ASCII（D9），命中提示"路径异常"拒绝
+		if hasNonASCII(newPath) {
+			dialog.ShowError(errors.New("路径异常：所选路径含非英文字符，不支持，请选择纯英文路径"), w)
+			return
+		}
 		mgr := storage.NewManager(a.cfg)
 		if !(a.cfg.StorageRootLocked && a.cfg.StorageRoot != "") {
-			// 首次设置
-			if err := mgr.SetRoot(newPath); err != nil {
-				dialog.ShowError(err, w)
-				return
-			}
-			a.cfg = config.Get()
-			storageRootLabel.SetText(a.storageRootDisplay())
-			dialog.ShowInformation("成功", "存储池根目录已设置", w)
+			// 5.3 首次设置也需本地管理员密码（spec 改为设置/修改均需密码）
+			VerifyPasswordForRootChange(w, func(pwd string) {
+				if err := mgr.SetRoot(newPath); err != nil {
+					dialog.ShowError(err, w)
+					return
+				}
+				a.cfg = config.Get()
+				storageRootLabel.SetText(a.storageRootDisplay())
+				notifyRootChanged(newPath)
+				dialog.ShowInformation("成功", "存储池根目录已设置", w)
+			})
 			return
 		}
 		// 变更（已锁定）：1) 容器占用检查
@@ -233,6 +241,7 @@ func (a *App) buildWindow() {
 					}
 					a.cfg = config.Get()
 					storageRootLabel.SetText(a.storageRootDisplay())
+					notifyRootChanged(newPath)
 					dialog.ShowInformation("成功", "存储池根目录已修改", w)
 				}, w)
 		})
@@ -281,6 +290,7 @@ func (a *App) buildWindow() {
 	// 关于按钮（platform-env-ota-realtime：展示受控端版本/管理端版本/系统信息）
 	aboutBtn := widget.NewButton("关于", a.showAbout)
 
+	// 单排（单列）布局（platform-audit-logging-ux 改回单排）
 	content := container.NewVBox(
 		widget.NewCard("系统状态", "", container.NewVBox(statusLabel, connStatus, instanceLabel)),
 		widget.NewCard("控制端设置", "", container.NewVBox(serverEntry, serverBtn)),

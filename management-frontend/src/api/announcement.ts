@@ -26,6 +26,24 @@ export interface AnnouncementBanner {
   publishedAt?: string
 }
 
+// 公告已读/未读名单项
+export interface ReadStatusItem {
+  userId: number
+  realName: string
+  username: string
+  email?: string
+  readAt?: string
+}
+
+// 公告已读/未读视图
+export interface ReadStatusView {
+  total: number
+  readCount: number
+  unreadCount: number
+  read: ReadStatusItem[]
+  unread: ReadStatusItem[]
+}
+
 export const announcementApi = {
   list: () => http.get<Announcement[]>('/announcements'),
   get: (id: number) => http.get<Announcement>(`/announcements/${id}`),
@@ -35,4 +53,8 @@ export const announcementApi = {
   listAll: () => http.get<Announcement[]>('/announcements/all'),
   // D9 登录公告未读列表
   loginBanner: () => http.get<AnnouncementBanner[]>('/announcements/login-banner'),
+  // 公告已读/未读名单（管理员）
+  readStatus: (id: number) => http.get<ReadStatusView>(`/announcements/${id}/read-status`),
+  // 对未读名单发送邮件提醒（管理员）
+  remind: (id: number) => http.post<{ reminded: number }>(`/announcements/${id}/remind`),
 }

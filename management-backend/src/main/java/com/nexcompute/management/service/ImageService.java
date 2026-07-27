@@ -21,8 +21,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.*;
-import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -43,6 +43,7 @@ public class ImageService {
     private final UserRepository userRepository;
     private final NexcomputeProperties properties;
     private final ObjectMapper objectMapper;
+    private final EmailService emailService;
 
     /** 暴露配置供 Controller 使用（tar 存储路径） */
     public NexcomputeProperties getProperties() {
@@ -172,13 +173,19 @@ public class ImageService {
     @Transactional
     public void shareImage(Long imageId, Long targetUserId) {
         checkOwnership(imageId);
-        if (!shareRepository.existsByImageIdAndSharedToUserId(imageId, targetUserId)) {
+        boolean isNew = !shareRepository.existsByImageIdAndSharedToUserId(imageId, targetUserId);
+        if (isNew) {
             shareRepository.save(ImageShare.builder()
                     .imageId(imageId)
                     .sharedToUserId(targetUserId)
                     .build());
         }
         markShared(imageId);
+        // email-notification 5.6：新共享成功后通知被共享个人 + 原可见用户（去重）
+        if (isNew) {
+            String targetName = userRepository.findById(targetUserId).map(User::getRealName).orElse("用户");
+            sendImagePermissionEmails(imageId, Set.of(targetUserId), "共享给 " + targetName);
+        }
     }
 
     /** 按工号精准共享（platform-refinements 6.6）：工号不匹配则拒绝并提示无此用户。 */
@@ -197,15 +204,21 @@ public class ImageService {
     public void shareImageToGroup(Long imageId, Long targetGroupId) {
         checkOwnership(imageId);
         List<User> members = userRepository.findByGroupId(targetGroupId);
+        Set<Long> newlyShared = new LinkedHashSet<>();
         for (User m : members) {
             if (!shareRepository.existsByImageIdAndSharedToUserId(imageId, m.getId())) {
                 shareRepository.save(ImageShare.builder()
                         .imageId(imageId)
                         .sharedToUserId(m.getId())
                         .build());
+                newlyShared.add(m.getId());
             }
         }
         markShared(imageId);
+        // email-notification 5.6：新共享成员 + 原可见用户（去重）
+        if (!newlyShared.isEmpty()) {
+            sendImagePermissionEmails(imageId, newlyShared, "共享给课题组（新增 " + newlyShared.size() + " 位）");
+        }
     }
 
     /** 共享后将 PRIVATE 镜像置为 SHARED（SHARED_TO_ALL 不变）。 */
@@ -232,6 +245,45 @@ public class ImageService {
         image.setVisibility(visibility);
         imageRepository.save(image);
         log.info("[Image] 可见性已设置: {}:{} -> {}", image.getName(), image.getTag(), visibility);
+        // email-notification 5.6：可见性变更通知原可见用户（无新增个人，relation 均为 ALREADY_VISIBLE）
+        String label = VIS_SHARED_TO_ALL.equals(visibility) ? "全员可见" : "仅本人";
+        sendImagePermissionEmails(imageId, Set.of(), "可见性改为 " + label);
+    }
+
+    /**
+     * 编辑镜像应用端口与使用说明（仅所有者/管理员）。
+     */
+    @Audited(action = "IMAGE_EDIT_META", targetType = "IMAGE", targetIdExpr = "#imageId")
+    @Transactional
+    public ImageMetadata editMetadata(Long imageId, List<Integer> appPorts, String usageInstructions) {
+        checkOwnership(imageId);
+        // 应用端口校验 + 去重（保留首次出现顺序）
+        validatePorts(appPorts);
+        List<Integer> deduped = null;
+        if (appPorts != null && !appPorts.isEmpty()) {
+            java.util.LinkedHashSet<Integer> seen = new java.util.LinkedHashSet<>(appPorts);
+            deduped = new java.util.ArrayList<>(seen);
+        }
+        ImageMetadata image = getImage(imageId);
+        image.setAppPorts(deduped);
+        image.setUsageInstructions(usageInstructions);
+        ImageMetadata saved = imageRepository.save(image);
+        log.info("[Image] 元数据已更新: {}:{} appPorts={} usage={}", image.getName(), image.getTag(), deduped,
+                usageInstructions == null ? "(空)" : (usageInstructions.length() + "字"));
+        return saved;
+    }
+
+    /**
+     * 应用端口校验：每个端口须为 1-65535 的整数，否则抛 BusinessException。
+     */
+    public static void validatePorts(List<Integer> ports) {
+        if (ports == null) return;
+        for (Integer p : ports) {
+            if (p == null || p < 1 || p > 65535) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST,
+                        "应用端口须为 1-65535 的整数，无效端口: " + p);
+            }
+        }
     }
 
     // 公共镜像库上传已下线（platform-refinements）：改用普通上传 + "全员可见"权限。
@@ -380,6 +432,63 @@ public class ImageService {
     /** 获取公共镜像列表（受控端同步用） */
     public List<ImageMetadata> listPublicImages() {
         return imageRepository.findByIsPublicTrue();
+    }
+
+    // ===== email-notification 5.6：镜像权限变更邮件（D7 去重） =====
+
+    /**
+     * 镜像权限变更邮件：收件人 = 新增被共享个人 ∪ 原可见用户（去重，排除所有者）。
+     * 按 relation 分两批经 {@link EmailService#sendAtBatch} 异步发送（同一批共享 ctx）：
+     * 新增者 relation=SHARED_TO，原可见用户 relation=ALREADY_VISIBLE。
+     *
+     * @param imageId        镜像 ID
+     * @param newlySharedIds 本次新增被共享的用户 ID（可见性变更时为空集）
+     * @param changeSummary  变更摘要（用于操作日志与正文）
+     */
+    private void sendImagePermissionEmails(Long imageId, Set<Long> newlySharedIds, String changeSummary) {
+        ImageMetadata image = getImage(imageId);
+        String sharerName = emailService.resolveOperatorName();
+        Set<Long> newlySet = newlySharedIds == null ? Set.of() : newlySharedIds;
+
+        // 原可见用户 = 已存在 image_share 记录（排除所有者与新增者）
+        List<User> alreadyVisibleUsers = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        for (ImageShare s : shareRepository.findByImageId(imageId)) {
+            Long uid = s.getSharedToUserId();
+            if (uid.equals(image.getOwnerId()) || newlySet.contains(uid) || !seen.add(uid)) continue;
+            User u = userRepository.findById(uid).orElse(null);
+            if (u != null && u.getEmail() != null && !u.getEmail().isBlank()) alreadyVisibleUsers.add(u);
+        }
+        // 新增被共享个人（排除所有者）
+        List<User> newlySharedUsers = new ArrayList<>();
+        for (Long uid : newlySet) {
+            if (uid.equals(image.getOwnerId())) continue;
+            User u = userRepository.findById(uid).orElse(null);
+            if (u != null && u.getEmail() != null && !u.getEmail().isBlank()) newlySharedUsers.add(u);
+        }
+
+        String imageName = image.getName() + ":" + image.getTag();
+        Instant now = Instant.now();
+        if (!newlySharedUsers.isEmpty()) {
+            Map<String, Object> ctx = baseImageCtx(imageName, sharerName, changeSummary, now);
+            ctx.put("relation", "SHARED_TO");
+            emailService.sendAtBatch(EmailTrigger.IMAGE_PERMISSION_CHANGED, newlySharedUsers, ctx);
+        }
+        if (!alreadyVisibleUsers.isEmpty()) {
+            Map<String, Object> ctx = baseImageCtx(imageName, sharerName, changeSummary, now);
+            ctx.put("relation", "ALREADY_VISIBLE");
+            emailService.sendAtBatch(EmailTrigger.IMAGE_PERMISSION_CHANGED, alreadyVisibleUsers, ctx);
+        }
+    }
+
+    private Map<String, Object> baseImageCtx(String imageName, String sharerName, String changeSummary, Instant now) {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("operatorName", sharerName);
+        ctx.put("time", now);
+        ctx.put("imageName", imageName);
+        ctx.put("sharerName", sharerName);
+        ctx.put("changeSummary", changeSummary);
+        return ctx;
     }
 
     private void checkOwnership(Long imageId) {

@@ -73,4 +73,7 @@ export const imageApi = {
     if (usageInstructions) formData.append('usageInstructions', usageInstructions)
     return http.post<ImageMetadata>('/images/upload-tar', formData)
   },
+  /** 编辑镜像应用端口与使用说明 */
+  editMetadata: (id: number, appPorts: number[], usageInstructions: string) =>
+    http.put<ImageMetadata>(`/images/${id}/metadata`, { appPorts, usageInstructions }),
 }

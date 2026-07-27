@@ -459,7 +459,7 @@ watch(selectedImage, (img) => {
       <a-button type="primary" @click="createVisible = true">创建容器</a-button>
     </div>
 
-    <a-table :data-source="containers" :loading="loading" row-key="id" :pagination="false">
+    <a-table :data-source="containers" :loading="loading" row-key="id" :pagination="false" :scroll="{ x: 'max-content' }" class="auto-table">
       <a-table-column title="容器名" data-index="name" :sorter="(a: Container, b: Container) => a.name.localeCompare(b.name)" />
       <a-table-column title="所有人" :width="100" :sorter="(a: Container, b: Container) => (a.ownerName||'').localeCompare(b.ownerName||'')">
         <template #default="{ record }">{{ record.ownerName || '-' }}</template>
@@ -812,3 +812,13 @@ watch(selectedImage, (img) => {
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+/* platform-audit-logging-ux：表头宽度自适应、不换行 */
+.auto-table :deep(.ant-table-thead > tr > th) {
+  white-space: nowrap;
+}
+.auto-table :deep(.ant-table-tbody > tr > td) {
+  white-space: nowrap;
+}
+</style>

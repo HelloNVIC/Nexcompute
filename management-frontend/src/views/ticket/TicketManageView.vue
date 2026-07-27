@@ -17,6 +17,21 @@ const detailVisible = ref(false)
 const pendingTickets = computed(() => tickets.value.filter((t) => t.status === 'PENDING'))
 const closedTickets = computed(() => tickets.value.filter((t) => t.status === 'CLOSED'))
 
+// platform-audit-logging-ux：单个工单详情（与导师/学生工单详情复用同一展示效果，含联系方式 + 处理记录）
+const ticketDetailVisible = ref(false)
+const ticketDetail = ref<Ticket | null>(null)
+const ticketHistory = ref<Array<{ action: string; operatorName: string; content: string; createdAt: string }>>([])
+async function showTicketDetail(ticket: Ticket): Promise<void> {
+  ticketDetail.value = ticket
+  ticketHistory.value = []
+  ticketDetailVisible.value = true
+  try {
+    ticketHistory.value = await ticketApi.history(ticket.id)
+  } catch {
+    // 拦截器已提示
+  }
+}
+
 const typeOptions = [
   { value: 'RESOURCE', label: '资源申请' },
   { value: 'FAULT', label: '故障报告' },
@@ -97,8 +112,9 @@ async function handleClose(): Promise<void> {
       <a-table-column title="提交时间" :width="160" :sorter="(a: Ticket, b: Ticket) => a.createdAt.localeCompare(b.createdAt)">
         <template #default="{ record }">{{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
       </a-table-column>
-      <a-table-column title="操作" :width="100">
+      <a-table-column title="操作" :width="160">
         <template #default="{ record }">
+          <a-button type="link" size="small" @click="showTicketDetail(record)">详情</a-button>
           <a-button v-if="record.status === 'PENDING'" type="link" size="small" @click="showReply(record)">回复关闭</a-button>
         </template>
       </a-table-column>
@@ -149,5 +165,36 @@ async function handleClose(): Promise<void> {
         </a-table-column>
       </a-table>
     </a-drawer>
+
+    <!-- platform-audit-logging-ux：单个工单详情（与导师/学生复用同一效果，含联系方式 + 处理记录） -->
+    <a-modal v-model:open="ticketDetailVisible" title="工单详情" width="640px" :footer="null">
+      <a-descriptions v-if="ticketDetail" :column="1" bordered size="small">
+        <a-descriptions-item label="工单号">{{ ticketDetail.ticketNo || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="标题">{{ ticketDetail.title }}</a-descriptions-item>
+        <a-descriptions-item label="类型">{{ typeLabel[ticketDetail.type] }}</a-descriptions-item>
+        <a-descriptions-item label="提交人">{{ ticketDetail.submitterName }}{{ ticketDetail.groupName ? '（' + ticketDetail.groupName + '）' : '' }}</a-descriptions-item>
+        <a-descriptions-item v-if="ticketDetail.contact" label="联系方式">{{ ticketDetail.contact }}</a-descriptions-item>
+        <a-descriptions-item label="状态">
+          <a-tag :color="statusColor[ticketDetail.status] || 'default'">{{ statusLabel[ticketDetail.status] || ticketDetail.status }}</a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item label="提交时间">{{ dayjs(ticketDetail.createdAt).format('YYYY-MM-DD HH:mm') }}</a-descriptions-item>
+        <a-descriptions-item label="内容">
+          <pre style="white-space: pre-wrap; margin: 0">{{ ticketDetail.content }}</pre>
+        </a-descriptions-item>
+        <a-descriptions-item v-if="ticketDetail.reply" label="回复">
+          <pre style="white-space: pre-wrap; margin: 0">{{ ticketDetail.reply }}</pre>
+          <div style="color: #999; font-size: 12px; margin-top: 4px">
+            {{ ticketDetail.replierName }} · {{ ticketDetail.repliedAt ? dayjs(ticketDetail.repliedAt).format('YYYY-MM-DD HH:mm') : '' }}
+          </div>
+        </a-descriptions-item>
+      </a-descriptions>
+      <a-typography-title v-if="ticketHistory.length" :level="5" style="margin-top: 16px">处理记录</a-typography-title>
+      <a-timeline v-if="ticketHistory.length">
+        <a-timeline-item v-for="(h, i) in ticketHistory" :key="i">
+          <p style="margin: 0">{{ h.action }} · {{ h.operatorName }}</p>
+          <p style="color: #999; font-size: 12px; margin: 0">{{ dayjs(h.createdAt).format('YYYY-MM-DD HH:mm') }}</p>
+        </a-timeline-item>
+      </a-timeline>
+    </a-modal>
   </div>
 </template>

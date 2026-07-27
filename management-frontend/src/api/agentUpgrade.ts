@@ -14,6 +14,10 @@ export interface AgentUpgradeTask {
   md5?: string
   status: string // PENDING / SUCCESS / FAILED
   error?: string
+  /** 当前升级阶段：downloading/verifying/backing_up/replacing/waiting（D2） */
+  progressStage?: string
+  /** 各段百分比 JSON：{"downloading":45,"verifying":0,"backing_up":0,"replacing":0,"waiting":0} */
+  stagePercents?: string
   createdAt?: string
   finishedAt?: string
 }

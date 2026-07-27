@@ -32,6 +32,7 @@ public class AnnouncementService {
     private final ResearchGroupRepository groupRepository;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final EmailService emailService;
 
     /**
      * 发布/编辑公告（任务 13.2；D10：GROUP 多选）
@@ -291,6 +292,66 @@ public class AnnouncementService {
                             NotificationType.ANNOUNCEMENT, ann.getId(), title, ann.getContent());
                 }
             }
+        }
+    }
+
+    // ===== 公告已读/未读名单 + 邮件提醒（管理员） =====
+
+    /** 已读/未读名单项 */
+    public record ReadStatusItem(Long userId, String realName, String username, String email, Instant readAt) {}
+
+    /** 已读/未读视图 */
+    public record ReadStatusView(int total, int readCount, int unreadCount,
+                                 List<ReadStatusItem> read, List<ReadStatusItem> unread) {}
+
+    /** 公告已读/未读名单（管理员） */
+    @Transactional(readOnly = true)
+    public ReadStatusView getReadStatus(Long annId) {
+        requireAdmin();
+        getAnnouncement(annId); // 校验存在
+        List<NotificationMessage> msgs = notificationService.getByTypeAndRefId(
+                NotificationType.ANNOUNCEMENT, annId);
+        Set<Long> userIds = msgs.stream().map(NotificationMessage::getUserId).collect(Collectors.toSet());
+        Map<Long, User> userMap = userIds.isEmpty() ? Map.of()
+                : userRepository.findAllById(userIds).stream().collect(Collectors.toMap(User::getId, u -> u));
+        List<ReadStatusItem> read = new ArrayList<>();
+        List<ReadStatusItem> unread = new ArrayList<>();
+        for (NotificationMessage m : msgs) {
+            User u = userMap.get(m.getUserId());
+            if (u == null) continue;
+            ReadStatusItem item = new ReadStatusItem(u.getId(), u.getRealName(), u.getUsername(),
+                    u.getEmail(), m.getReadAt());
+            if (Boolean.TRUE.equals(m.getIsRead())) {
+                read.add(item);
+            } else {
+                unread.add(item);
+            }
+        }
+        return new ReadStatusView(msgs.size(), read.size(), unread.size(), read, unread);
+    }
+
+    /**
+     * 对未读名单发送邮件提醒（管理员手动触发）。
+     * 返回待提醒的未读人数（实际发送异步进行）。
+     */
+    public int remindUnread(Long annId) {
+        requireAdmin();
+        Announcement ann = getAnnouncement(annId);
+        List<NotificationMessage> msgs = notificationService.getByTypeAndRefId(
+                NotificationType.ANNOUNCEMENT, annId);
+        List<User> unread = msgs.stream()
+                .filter(m -> !Boolean.TRUE.equals(m.getIsRead()))
+                .map(m -> userRepository.findById(m.getUserId()).orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+        if (unread.isEmpty()) return 0;
+        emailService.sendAnnouncementReminder(ann, unread, emailService.resolveOperatorName());
+        return unread.size();
+    }
+
+    private void requireAdmin() {
+        if (SecurityUtils.getCurrentRole() != UserRole.ADMIN) {
+            throw new BusinessException(ErrorCode.PERMISSION_DENIED, "仅管理员可操作");
         }
     }
 }

@@ -39,6 +39,8 @@ class ImageServiceTest {
     private NexcomputeProperties properties;
     @Mock
     private ObjectMapper objectMapper;
+    @Mock
+    private EmailService emailService;
 
     @InjectMocks
     private ImageService imageService;

@@ -63,11 +63,12 @@ public class StoragePoolController {
         return ApiResponse.success();
     }
 
-    /** 删除存储池（platform-refinements 7.1：前置检查无运行容器依赖） */
+    /** 删除存储池（platform-refinements 7.1：前置检查无运行容器依赖；force=true 仅管理员，用于实例离线时强制删除） */
     @DeleteMapping("/{poolId}")
     @RequirePermission(module = "storage-pool", action = RequirePermission.Action.DELETE)
-    public ApiResponse<Void> delete(@PathVariable Long poolId) {
-        poolService.deletePool(poolId);
+    public ApiResponse<Void> delete(@PathVariable Long poolId,
+                                     @RequestParam(required = false, defaultValue = "false") boolean force) {
+        poolService.deletePool(poolId, force);
         return ApiResponse.success();
     }
 

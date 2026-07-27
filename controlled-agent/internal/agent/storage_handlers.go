@@ -192,18 +192,58 @@ func (e *Executor) handleStorageUploadFile(cmd *Command) (string, error) {
 }
 
 func copyFile(src, dst string) error {
+	return copyFileWithProgress(src, dst, nil)
+}
+
+// CopyProgress 复制进度回调（已复制字节 / 总字节）
+type CopyProgress func(copied, total int64)
+
+// copyFileWithProgress 复制文件并按读写字节回传进度（D2 ③ 备份段进度回传用）。
+func copyFileWithProgress(src, dst string, progress CopyProgress) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	total := info.Size()
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	buf := make([]byte, 64*1024)
+	var copied int64
+	for {
+		n, rerr := in.Read(buf)
+		if n > 0 {
+			if _, werr := out.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			copied += int64(n)
+			if progress != nil && total > 0 {
+				pct := int(copied * 100 / total)
+				if pct > 100 {
+					pct = 100
+				}
+				progress(copied, total)
+				_ = pct
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
+	if progress != nil {
+		progress(total, total)
+	}
+	return nil
 }
 
 // handleStorageCreateDir 创建存储池目录（任务 8.3）

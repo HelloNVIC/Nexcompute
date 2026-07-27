@@ -38,6 +38,44 @@ const shareForm = reactive({
 })
 const groups = ref<ResearchGroup[]>([])
 
+// 编辑元数据弹窗（应用端口 + 使用说明）
+const editVisible = ref(false)
+const editSubmitting = ref(false)
+const editForm = reactive({
+  id: 0,
+  name: '',
+  tag: '',
+  appPorts: [] as number[],
+  usageInstructions: '',
+})
+
+function openEdit(image: ImageMetadata): void {
+  editForm.id = image.id
+  editForm.name = image.name
+  editForm.tag = image.tag
+  editForm.appPorts = [...(image.appPorts ?? [])]
+  editForm.usageInstructions = image.usageInstructions ?? ''
+  editVisible.value = true
+}
+
+function editPortChange(ports: (string | number)[]): void {
+  editForm.appPorts = dedupePorts(ports)
+}
+
+async function handleEditSubmit(): Promise<void> {
+  editSubmitting.value = true
+  try {
+    await imageApi.editMetadata(editForm.id, editForm.appPorts, editForm.usageInstructions)
+    message.success('已更新应用端口与使用说明')
+    editVisible.value = false
+    load()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
 onMounted(load)
 
 async function load(): Promise<void> {
@@ -89,7 +127,29 @@ function handleRemoveFile(): boolean {
 }
 
 function appPortChange(ports: (string | number)[]): void {
-  tarForm.appPorts = ports.map((p) => Number(p)).filter((p) => !isNaN(p) && p > 0)
+  tarForm.appPorts = dedupePorts(ports)
+}
+
+// 应用端口去重 + 校验（单个镜像同一端口只保留一个；端口须为 1-65535 整数）
+function dedupePorts(ports: (string | number)[]): number[] {
+  const seen = new Set<number>()
+  const result: number[] = []
+  let invalid = 0
+  for (const p of ports) {
+    const n = Number(p)
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      invalid++
+      continue
+    }
+    if (!seen.has(n)) {
+      seen.add(n)
+      result.push(n)
+    }
+  }
+  if (invalid > 0) {
+    message.warning(`已忽略 ${invalid} 个无效端口（端口须为 1-65535 的整数）`)
+  }
+  return result
 }
 
 async function handleSubmit(): Promise<void> {
@@ -252,8 +312,9 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
       <a-table-column title="创建时间" :width="160">
         <template #default="{ record }">{{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
       </a-table-column>
-      <a-table-column title="操作" :width="140">
+      <a-table-column title="操作" :width="200">
         <template #default="{ record }">
+          <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
           <a-button type="link" size="small" @click="downloadImage(record)">下载</a-button>
           <a-button type="link" size="small" @click="openShare(record)">{{ shareLabel }}</a-button>
           <a-button type="link" size="small" danger @click="confirmDelete(record)">删除</a-button>
@@ -345,6 +406,35 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
           type="warning" show-icon
           message="仅本人与管理员可见，已共享关系不清除但即时失效（恢复全员/共享后再次生效）。"
         />
+      </a-form>
+    </a-modal>
+
+    <!-- 编辑应用端口与使用说明 -->
+    <a-modal
+      v-model:open="editVisible"
+      title="编辑应用端口与使用说明"
+      :confirm-loading="editSubmitting"
+      @ok="handleEditSubmit"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="镜像">
+          <a-input :value="`${editForm.name}:${editForm.tag}`" disabled />
+        </a-form-item>
+        <a-form-item label="应用端口（多个，创建容器时预填容器内端口）">
+          <a-select
+            :value="editForm.appPorts"
+            mode="tags"
+            placeholder="如 8888, 6006"
+            @change="editPortChange"
+          />
+        </a-form-item>
+        <a-form-item label="使用说明">
+          <a-textarea
+            v-model:value="editForm.usageInstructions"
+            :rows="4"
+            placeholder="镜像用途、启动方式、访问方式等说明"
+          />
+        </a-form-item>
       </a-form>
     </a-modal>
   </div>

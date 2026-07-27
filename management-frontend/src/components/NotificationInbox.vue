@@ -67,26 +67,66 @@ async function markAllAsRead(): Promise<void> {
           <a-button v-if="unreadCount > 0" type="link" size="small" @click="markAllAsRead">全部已读</a-button>
         </div>
         <a-empty v-if="unreadList.length === 0" description="暂无未读消息" />
-        <a-list v-else :data-source="unreadList" size="small">
-          <template #renderItem="{ item }">
-            <a-list-item @click="markAsRead(item.id)" style="cursor: pointer; padding: 8px 0">
-              <a-list-item-meta>
-                <template #title>
-                  <a-tag :color="typeColor[item.type]" style="margin-right: 4px">{{ typeLabel[item.type] }}</a-tag>
-                  {{ item.title || item.content }}
-                </template>
-                <template #description>
-                  {{ item.content.length > 50 ? item.content.slice(0, 50) + '...' : item.content }}
-                  <br />
-                  <a-typography-text type="secondary" style="font-size: 12px">
-                    {{ dayjs(item.createdAt).format('MM-DD HH:mm') }}
-                  </a-typography-text>
-                </template>
-              </a-list-item-meta>
-            </a-list-item>
-          </template>
-        </a-list>
+        <!-- platform-audit-logging-ux 11.3：每条消息独立卡片，卡片间有间距 -->
+        <div v-else class="msg-cards">
+          <div
+            v-for="item in unreadList"
+            :key="item.id"
+            class="msg-card"
+            @click="markAsRead(item.id)"
+          >
+            <div class="msg-card-header">
+              <a-tag :color="typeColor[item.type]">{{ typeLabel[item.type] }}</a-tag>
+              <span class="msg-card-title">{{ item.title || item.content }}</span>
+            </div>
+            <div class="msg-card-content">
+              {{ item.content.length > 80 ? item.content.slice(0, 80) + '...' : item.content }}
+            </div>
+            <div class="msg-card-time">{{ dayjs(item.createdAt).format('YYYY-MM-DD HH:mm') }}</div>
+          </div>
+        </div>
       </div>
     </template>
   </a-popover>
 </template>
+
+<style scoped>
+.msg-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.msg-card {
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  cursor: pointer;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.msg-card:hover {
+  border-color: #91caff;
+  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.12);
+}
+.msg-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.msg-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #1f1f1f;
+}
+.msg-card-content {
+  font-size: 13px;
+  color: #555;
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.msg-card-time {
+  font-size: 12px;
+  color: #999;
+}
+</style>

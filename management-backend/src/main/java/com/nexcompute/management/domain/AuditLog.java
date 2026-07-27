@@ -48,6 +48,18 @@ public class AuditLog {
     @Column(name = "ip_address", length = 50)
     private String ipAddress;
 
+    /** 操作记录唯一编码（ULID 有序短码） */
+    @Column(name = "operation_no", length = 26)
+    private String operationNo;
+
+    /** 客户端信息（UA + IP，受控端操作时含实例编号） */
+    @Column(name = "client_info", length = 500)
+    private String clientInfo;
+
+    /** 操作时导师归属快照（学生记当时导师 ID，导师/管理员为 null） */
+    @Column(name = "mentor_id_at_op")
+    private Long mentorIdAtOp;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

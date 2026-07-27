@@ -23,6 +23,7 @@ export const userApi = {
   update: (id: number, data: Partial<CreateUserPayload> & { status?: string }) =>
     http.put<UserInfoDto>(`/admin/users/${id}`, data),
   disable: (id: number) => http.post(`/admin/users/${id}/disable`),
+  enable: (id: number) => http.post(`/admin/users/${id}/enable`),
   /** 删除用户（platform-refinements #3） */
   remove: (id: number) => http.delete(`/admin/users/${id}`),
   /** 管理用户课题组归属（platform-refinements 9.1） */

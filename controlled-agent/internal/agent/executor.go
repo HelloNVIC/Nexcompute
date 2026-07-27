@@ -35,11 +35,38 @@ type Executor struct {
 	docker    *docker.Manager
 	envSyncer *EnvSyncer
 	quitFunc  func() // 升级后优雅退出（由 GUI 注入，marshal 到主线程）
+	sender    MessageSender
 }
 
 // NewExecutor 创建执行器
 func NewExecutor(cfg *config.Config) *Executor {
-	return &Executor{cfg: cfg}
+	return &Executor{cfg: cfg, sender: noopSender{}}
+}
+
+// SetMessageSender 注入消息发送器（wsclient），用于长时命令回传 progress（D2）
+func (e *Executor) SetMessageSender(s MessageSender) {
+	if s == nil {
+		e.sender = noopSender{}
+		return
+	}
+	e.sender = s
+}
+
+// sendProgress 回传进度消息（不替代最终 Result）
+func (e *Executor) sendProgress(commandID, stage string, percent int) {
+	if e.sender == nil {
+		return
+	}
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	e.sender.SendProgress(ProgressMessage{
+		Type: "progress", CommandID: commandID, Stage: stage, Percent: percent,
+		Timestamp: time.Now().UnixMilli(),
+	})
 }
 
 // SetDockerManager 注入 Docker 管理器
@@ -163,6 +190,10 @@ func (e *Executor) dispatch(cmd *Command) (string, error) {
 	// 受控端 OTA 自更新（platform-env-ota-realtime D7）
 	case "agent.upgrade":
 		return e.handleUpgrade(cmd)
+
+	// 受控端日志远端查看（platform-audit-logging-ux D8：列目录 + 尾 N 行）
+	case "agent.log":
+		return e.handleAgentLog(cmd)
 
 	// 文件传输（任务 7.4、7.5）
 	case "file.upload", "file.download":

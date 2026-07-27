@@ -99,7 +99,7 @@ async function handleUpload(file: File): Promise<boolean> {
 
 function confirmDeleteVersion(v: AgentVersion): void {
   Modal.confirm({
-    title: `确认删除版本 v${v.version}？`,
+    title: `确认删除版本 ${v.version}？`,
     content: '删除后该版本的 exe 将不可用于升级，已升级的实例不受影响。',
     onOk: async () => {
       await agentUpgradeApi.deleteVersion(v.version)
@@ -129,6 +129,31 @@ async function doUpgrade(): Promise<void> {
 const statusLabel: Record<string, string> = { PENDING: '进行中', SUCCESS: '成功', FAILED: '失败' }
 const statusColor: Record<string, string> = { PENDING: 'orange', SUCCESS: 'green', FAILED: 'red' }
 
+// platform-audit-logging-ux 11.2：5 段独立进度条
+// 段：①下发文件中 ②校验中 ③备份中 ④替换重启中 ⑤等待版本确认中
+const STAGES: Array<{ key: string; label: string }> = [
+  { key: 'downloading', label: '① 下发文件中' },
+  { key: 'verifying', label: '② 校验中' },
+  { key: 'backing_up', label: '③ 备份中' },
+  { key: 'replacing', label: '④ 替换重启中' },
+  { key: 'waiting', label: '⑤ 等待版本确认中' },
+]
+
+function stagePercents(task: AgentUpgradeTask): Record<string, number> {
+  if (!task.stagePercents) {
+    // 无进度信息：成功全 100，失败全 0，进行中按已锁定段推断
+    if (task.status === 'SUCCESS') {
+      return { downloading: 100, verifying: 100, backing_up: 100, replacing: 100, waiting: 100 }
+    }
+    return { downloading: 0, verifying: 0, backing_up: 0, replacing: 0, waiting: 0 }
+  }
+  try {
+    return JSON.parse(task.stagePercents)
+  } catch {
+    return { downloading: 0, verifying: 0, backing_up: 0, replacing: 0, waiting: 0 }
+  }
+}
+
 function fmtSize(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB'
   if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB'
@@ -144,7 +169,7 @@ function fmtSize(bytes: number): string {
     <a-card title="已上传版本" size="small" style="margin-bottom: 16px">
       <a-table :data-source="versions" :loading="loadingVersions" row-key="version" :pagination="false" size="small">
         <a-table-column title="版本" :width="140">
-          <template #default="{ record }">v{{ record.version }}</template>
+          <template #default="{ record }">{{ record.version }}</template>
         </a-table-column>
         <a-table-column title="MD5" :width="260">
           <template #default="{ record }">
@@ -183,7 +208,7 @@ function fmtSize(bytes: number): string {
           style="width: 200px"
         >
           <a-select-option v-for="v in versions" :key="v.version" :value="v.version">
-            v{{ v.version }}
+            {{ v.version }}
           </a-select-option>
         </a-select>
         <a-button type="primary" :loading="upgrading" @click="doUpgrade">
@@ -219,11 +244,26 @@ function fmtSize(bytes: number): string {
           <template #default="{ record }">{{ record.instanceNumber }}</template>
         </a-table-column>
         <a-table-column title="目标版本" :width="120">
-          <template #default="{ record }">v{{ record.version }}</template>
+          <template #default="{ record }">{{ record.version }}</template>
         </a-table-column>
         <a-table-column title="状态" :width="90">
           <template #default="{ record }">
             <a-tag :color="statusColor[record.status] || 'default'">{{ statusLabel[record.status] || record.status }}</a-tag>
+          </template>
+        </a-table-column>
+        <a-table-column title="升级进度（5 段）" :width="320">
+          <template #default="{ record }">
+            <div class="stage-list">
+              <div v-for="s in STAGES" :key="s.key" class="stage-item">
+                <span class="stage-label">{{ s.label }}</span>
+                <a-progress
+                  :percent="stagePercents(record)[s.key] || 0"
+                  :stroke-width="6"
+                  :status="stagePercents(record)[s.key] >= 100 ? 'success' : 'active'"
+                  size="small"
+                />
+              </div>
+            </div>
           </template>
         </a-table-column>
         <a-table-column title="错误" :width="220">
@@ -242,3 +282,25 @@ function fmtSize(bytes: number): string {
     </a-card>
   </div>
 </template>
+
+<style scoped>
+.stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stage-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stage-label {
+  font-size: 12px;
+  color: #555;
+  white-space: nowrap;
+  width: 120px;
+}
+.stage-item :deep(.ant-progress) {
+  flex: 1;
+}
+</style>

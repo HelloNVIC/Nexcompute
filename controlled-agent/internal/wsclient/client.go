@@ -130,6 +130,30 @@ func (c *Client) handleMessage(data []byte) {
 	}
 }
 
+// SendProgress 实现 agent.MessageSender：回传进度消息（platform-audit-logging-ux D2）。
+// 复用 WriteMessage，独立于最终 Result（不 complete future）。
+func (c *Client) SendProgress(msg agent.ProgressMessage) {
+	if msg.Type == "" {
+		msg.Type = "progress"
+	}
+	if msg.Timestamp == 0 {
+		msg.Timestamp = time.Now().UnixMilli()
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("[ws] 序列化 progress 失败: %v", err)
+		return
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.conn == nil {
+		return
+	}
+	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		log.Printf("[ws] 回传 progress 失败: %v", err)
+	}
+}
+
 func (c *Client) backoffSleep() {
 	base := time.Duration(c.cfg.WSReconnectBaseMs) * time.Millisecond
 	if base <= 0 {

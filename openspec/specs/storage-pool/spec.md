@@ -5,10 +5,10 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 ## Requirements
 ### Requirement: 存储池创建与命名
 
-用户 SHALL 能在分配给自己的物理实例上创建项目存储池。存储池命名格式 MUST 为 `物理机编号-工号/学号-用户自定义项目名`（如 `01-2021001A-bert-finetune`）。一个用户在一台机器上可创建多个项目存储池。
+用户 SHALL 能在分配给自己的物理实例上创建项目存储池。存储池命名格式 MUST 为 `物理机编号-工号/学号-用户自定义项目名`（如 `01-2021001A-bert-finetune`）。一个用户在一台机器上可创建多个项目存储池。受控端 SHALL 已设置存储池根目录为创建存储池的前置条件：当受控端未设置存储池根目录时，系统 SHALL 拒绝创建并提示用户先在受控端设置根目录。根目录设置状态以受控端经心跳上报并落库的 `storageRoot` 为准。
 
 #### Scenario: 创建项目存储池
-- **WHEN** 用户在某物理实例上创建存储池并填写项目名
+- **WHEN** 用户在某物理实例上创建存储池并填写项目名，且该实例受控端已设置根目录
 - **THEN** 系统按命名格式生成存储池名称
 - **AND** 受控端在存储池根目录下创建对应文件夹
 - **AND** 管理端记录存储池元数据（归属用户、物理实例、项目名、路径）
@@ -17,6 +17,11 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 - **WHEN** 用户在同一物理实例上创建多个不同项目名的存储池
 - **THEN** 系统为每个项目名创建独立存储池
 - **AND** 各池数据相互隔离
+
+#### Scenario: 未设根目录拒绝创建
+- **WHEN** 用户在受控端未设置存储池根目录的物理实例上创建存储池
+- **THEN** 系统拒绝创建
+- **AND** 提示用户先在受控端设置存储池根目录
 
 ### Requirement: 存储池挂载隔离
 
@@ -35,6 +40,7 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 - **WHEN** 用户在容器创建表单中查看存储池下拉
 - **THEN** 离线状态的存储池被禁用或标注不可选
 - **AND** 用户无法选择离线池创建容器
+
 ### Requirement: 存储池共享授权
 
 用户 SHALL 能将自己的存储池共享给其他用户访问。共享授权可由存储池所有者管理（授予/撤销）。
@@ -85,7 +91,6 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 - **WHEN** 用户将 `01-A-bert` 迁移到机器 02
 - **THEN** 目标生成 `02-A-bert`，与原 `01-A-bert` 是两个独立存储池
 
-
 ### Requirement: 存储池离线状态
 
 存储池 SHALL 具有离线状态。当存储池所属物理实例处于离线状态，或存储池的绝对路径（`poolPath`）缺失或无效时，系统 SHALL 将该存储池展示为离线。离线为计算型状态，由查询时根据物理实例在线状态与路径有效性推导，SHALL NOT 持久化为独立的存储状态值，且不与 ACTIVE/MIGRATING/MIGRATED 等迁移生命周期状态冲突。离线存储池 SHALL NOT 被选用于创建新容器。
@@ -106,13 +111,19 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 
 ### Requirement: 存储池删除
 
-用户 SHALL 能删除自己拥有的、当前无运行容器使用的存储池。删除前置检查：若有运行中容器正在使用此存储池，系统 SHALL 拒绝删除并提示用户先停止相关容器。删除时受控端 SHALL 删除存储池根目录下对应文件夹，管理端删除存储池元数据。
+用户 SHALL 能删除自己拥有的、当前无运行容器使用的存储池。删除前置检查：若有运行中容器正在使用此存储池，系统 SHALL 拒绝删除并提示用户先停止相关容器。删除时受控端在线且存储池有绝对路径（poolPath）时，受控端 SHALL 删除存储池根目录下对应文件夹；受控端在线但存储池无绝对路径（poolPath 为空）时，系统 SHALL 跳过目录删除并仅删除管理端元数据。管理端删除存储池元数据。
 
 #### Scenario: 删除无依赖的存储池
-- **WHEN** 用户删除一个自己拥有的、无运行容器使用的存储池
+- **WHEN** 用户删除一个自己拥有的、无运行容器使用、有 poolPath 的在线存储池
 - **THEN** 受控端删除存储池根目录下对应文件夹
 - **AND** 管理端删除该存储池元数据
 
 #### Scenario: 拒绝删除有运行容器依赖的存储池
 - **WHEN** 用户删除一个有运行中容器正在使用的存储池
 - **THEN** 系统拒绝删除并提示用户先停止相关容器
+
+#### Scenario: 在线无路径仍删元数据
+- **WHEN** 用户删除一个受控端在线但 poolPath 为空的存储池
+- **THEN** 系统跳过受控端目录删除
+- **AND** 管理端仍删除该存储池元数据
+

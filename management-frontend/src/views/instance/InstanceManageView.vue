@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { instanceApi, type PhysicalInstance } from '@/api/instance'
+import { getSseClient } from '@/utils/sse'
 
 const loading = ref(false)
 const instances = ref<PhysicalInstance[]>([])
@@ -17,6 +18,25 @@ const numberModalVisible = ref(false)
 const numberForm = reactive({ id: 0, number: '' })
 
 onMounted(load)
+
+// platform-audit-logging-ux 9.3：订阅 instance SSE 事件，实时刷新实例状态
+let offInstanceSse: (() => void) | null = null
+onMounted(() => {
+  offInstanceSse = getSseClient().on('instance', (data) => {
+    const ev = data as { instanceId?: number; status?: string; instanceNumber?: string }
+    if (!ev || !ev.instanceId) return
+    const target = instances.value.find((i) => i.id === ev.instanceId)
+    if (target && ev.status && target.status !== ev.status) {
+      target.status = ev.status
+    } else if (ev.instanceNumber && !target) {
+      // 新注册实例：重新加载列表
+      load()
+    }
+  })
+})
+onUnmounted(() => {
+  offInstanceSse?.()
+})
 
 async function load(): Promise<void> {
   loading.value = true

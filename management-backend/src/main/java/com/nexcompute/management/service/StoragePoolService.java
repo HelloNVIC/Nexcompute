@@ -46,6 +46,7 @@ public class StoragePoolService {
     private final ContainerRepository containerRepository;
     private final AgentCommandService agentCommandService;
     private final NotificationService notificationService;
+    private final EmailService emailService;
     private final NexcomputeProperties properties;
     private final ObjectMapper objectMapper;
     private final FileTransferService fileTransferService;
@@ -60,6 +61,10 @@ public class StoragePoolService {
         Long userId = SecurityUtils.getCurrentUserId();
         PhysicalInstance instance = instanceRepository.findById(instanceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
+        // 8.1 前置校验：受控端未设置存储池根目录则拒绝建池（根目录状态经心跳落库 storageRoot）
+        if (instance.getStorageRoot() == null || instance.getStorageRoot().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "受控端未设置存储池根目录，请先在受控端设置根目录");
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
@@ -254,7 +259,24 @@ public class StoragePoolService {
                 "storage.migration_upload", sourcePayload);
 
         log.info("[StoragePool] 迁移已启动: pool={} {} -> {}", poolId, pool.getInstanceNumber(), targetInstance.getInstanceNumber());
+        // email-notification 5.5：存储池迁移发起后异步通知所有者
+        sendPoolMigratedEmail(pool, targetInstance);
         return migration;
+    }
+
+    /** 存储池迁移邮件：sourceHost/targetHost 用源/目标物理机编号，status=迁移中。 */
+    private void sendPoolMigratedEmail(StoragePool pool, PhysicalInstance targetInstance) {
+        if (pool.getOwnerId() == null) return;
+        User owner = userRepository.findById(pool.getOwnerId()).orElse(null);
+        if (owner == null || owner.getEmail() == null || owner.getEmail().isBlank()) return;
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("operatorName", emailService.resolveOperatorName());
+        ctx.put("time", Instant.now());
+        ctx.put("poolName", pool.getPoolName());
+        ctx.put("sourceHost", pool.getInstanceNumber());
+        ctx.put("targetHost", targetInstance != null ? targetInstance.getInstanceNumber() : "");
+        ctx.put("status", "迁移中");
+        emailService.sendAt(EmailTrigger.STORAGE_POOL_MIGRATED, owner, ctx);
     }
 
     /** 迁移完成确认删除源池 */
@@ -289,20 +311,28 @@ public class StoragePoolService {
 
     /**
      * 删除存储池（platform-refinements 7.2）。
-     * 前置检查：无运行中容器使用此池（有则拒绝，提示先停止）。
-     * 通过后下发受控端删除目录命令（best-effort），并删除存储池元数据与共享关系。
+     * <p>普通删除：前置检查实例在线 + 无运行中容器使用此池（有则拒绝，提示先停止）。
+     * <p>强制删除（force=true，仅管理员）：跳过在线检查与运行容器检查，仅清理管理端元数据与共享/迁移关系；
+     * 受控端磁盘数据 best-effort 清理（离线则跳过并告警，需实例恢复后手动清理）。用于物理实例永久离线场景。
      */
     @Audited(action = "STORAGE_POOL_DELETE", targetType = "STORAGE_POOL", targetIdExpr = "#poolId")
     @Transactional
-    public void deletePool(Long poolId) {
+    public void deletePool(Long poolId, boolean force) {
         StoragePool pool = getPoolAndCheckOwnership(poolId);
-        requirePoolInstanceOnline(pool);
-
-        // 前置检查：无运行中容器使用此池
-        List<Container> running = containerRepository.findByStoragePoolIdAndStatus(poolId, "RUNNING");
-        if (!running.isEmpty()) {
-            throw new BusinessException(ErrorCode.STORAGE_POOL_IN_USE,
-                    "有 " + running.size() + " 个运行中容器使用此存储池，请先停止相关容器");
+        if (force) {
+            if (SecurityUtils.getCurrentRole() != UserRole.ADMIN) {
+                throw new BusinessException(ErrorCode.PERMISSION_DENIED, "仅管理员可强制删除存储池");
+            }
+            log.warn("[StoragePool] 管理员强制删除存储池（实例可能离线，磁盘数据需手动清理）: {} ({})",
+                    poolId, pool.getPoolName());
+        } else {
+            requirePoolInstanceOnline(pool);
+            // 前置检查：无运行中容器使用此池
+            List<Container> running = containerRepository.findByStoragePoolIdAndStatus(poolId, "RUNNING");
+            if (!running.isEmpty()) {
+                throw new BusinessException(ErrorCode.STORAGE_POOL_IN_USE,
+                        "有 " + running.size() + " 个运行中容器使用此存储池，请先停止相关容器");
+            }
         }
 
         // 下发受控端删除目录（best-effort：离线或失败仅告警，元数据仍删除）
@@ -324,7 +354,7 @@ public class StoragePoolService {
         shareRepository.deleteByPoolId(poolId);
         migrationRepository.findByPoolId(poolId).ifPresent(migrationRepository::delete);
         poolRepository.delete(pool);
-        log.info("[StoragePool] 存储池已删除: {} ({})", poolId, pool.getPoolName());
+        log.info("[StoragePool] 存储池已删除: {} ({}){}", poolId, pool.getPoolName(), force ? "（强制）" : "");
     }
 
     // ===== 存储池文件管理（platform-refinements #3：浏览/打包下载/上传）=====

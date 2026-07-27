@@ -18,6 +18,7 @@ public class NexcomputeProperties {
     private Monitoring monitoring = new Monitoring();
     private Agent agent = new Agent();
     private Storage storage = new Storage();
+    private Email email = new Email();
     private Cors cors = new Cors();
 
     @Data
@@ -66,6 +67,31 @@ public class NexcomputeProperties {
         private String envDir;
         /** 受控端 OTA 升级 exe 托管目录（D7：${root}/agent-upgrade） */
         private String agentUpgradeDir;
+    }
+
+    /**
+     * email-notification D4：SMTP/品牌默认值（${ENV} 可覆盖）。
+     * 首启经 Flyway V28 种子入 system_config；运行时 EmailService 以 DB 为准，本配置作默认/兜底。
+     */
+    @Data
+    public static class Email {
+        private String from = "cufel@cufe.edu.cn";
+        private String host = "smtp.exmail.qq.com";
+        private int port = 465;
+        private String protocol = "smtps";
+        private String user = "cufel@cufe.edu.cn";
+        /** 明文存储（D5：用户明确不加密），GET 接口脱敏 */
+        private String passwd = "";
+        private Brand brand = new Brand();
+
+        @Data
+        public static class Brand {
+            private String name = "合算 Nexcompute";
+            /** 多行落款 */
+            private String signature = "- Nexcompute 管理平台\n（此邮件由系统自动发送，请勿直接回复）";
+            /** 空=用 classpath 默认 PNG；非空用 ${storage.root}/email/ 下已上传文件 */
+            private String logoFilename = "";
+        }
     }
 
     @Data

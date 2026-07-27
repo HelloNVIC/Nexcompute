@@ -70,7 +70,7 @@ class TicketServiceTest {
             return t;
         });
 
-        Ticket result = ticketService.createTicket("需要 GPU", TicketType.RESOURCE, "申请 GPU 资源");
+        Ticket result = ticketService.createTicket("需要 GPU", TicketType.RESOURCE, "申请 GPU 资源", "13800000000");
 
         assertThat(result.getSubmitterId()).isEqualTo(1L);
         assertThat(result.getStatus()).isEqualTo("PENDING");
@@ -93,7 +93,7 @@ class TicketServiceTest {
             return t;
         });
 
-        Ticket result = ticketService.createTicket("标题", TicketType.FAULT, "内容");
+        Ticket result = ticketService.createTicket("标题", TicketType.FAULT, "内容", "13900000000");
 
         assertThat(result.getGroupName()).isEqualTo("AI 课题组");
     }

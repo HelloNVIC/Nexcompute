@@ -61,6 +61,13 @@ public class UserManagementController {
         return ApiResponse.success();
     }
 
+    /** 启用用户（恢复可登录） */
+    @PostMapping("/{id}/enable")
+    public ApiResponse<Void> enable(@PathVariable Long id) {
+        userService.enableUser(id);
+        return ApiResponse.success();
+    }
+
     /** 删除用户（platform-refinements #3） */
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {

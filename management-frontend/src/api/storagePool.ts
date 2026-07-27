@@ -43,8 +43,8 @@ export const storagePoolApi = {
     http.post(`/storage-pools/${poolId}/migrate`, { targetInstanceId }),
   confirmMigration: (poolId: number) =>
     http.post(`/storage-pools/${poolId}/migrate/confirm`),
-  /** 删除存储池（platform-refinements 7.3：前置检查无运行容器依赖） */
-  remove: (poolId: number) => http.delete(`/storage-pools/${poolId}`),
+  /** 删除存储池（platform-refinements 7.3：前置检查无运行容器依赖；force=true 仅管理员，用于实例离线时强制删除） */
+  remove: (poolId: number, force = false) => http.delete(`/storage-pools/${poolId}`, { force }),
   // 文件管理（platform-refinements #3）
   files: (poolId: number, path: string) =>
     http.get<PoolFileEntry[]>(`/storage-pools/${poolId}/files`, { path }),

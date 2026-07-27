@@ -9,6 +9,10 @@ import {
   type PoolFileEntry,
 } from '@/api/storagePool'
 import { instanceApi, type PhysicalInstance } from '@/api/instance'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const isAdmin = auth.role === 'ADMIN'
 
 const loading = ref(false)
 const pools = ref<StoragePool[]>([])
@@ -244,6 +248,48 @@ function confirmDelete(pool: StoragePool): void {
   })
 }
 
+// 物理实例离线时管理员强制删除：三次确认（不可恢复，磁盘数据需手动清理）
+function confirmForceDelete(pool: StoragePool, step = 1): void {
+  const steps = [
+    {
+      title: `第 1/3 步：强制删除存储池「${pool.poolName}」？`,
+      content: '所属物理实例不在线。强制删除仅清除管理端元数据与共享/迁移关系，不会清理受控端磁盘数据（需实例恢复后手动清理）。',
+      okText: '继续',
+    },
+    {
+      title: '第 2/3 步：再次确认',
+      content: '此操作不可恢复。确定要继续强制删除该存储池吗？',
+      okText: '继续',
+    },
+    {
+      title: '第 3/3 步：最后确认',
+      content: '这是最后一次确认。确定强制删除存储池？',
+      okText: '强制删除',
+    },
+  ]
+  const s = steps[step - 1]
+  Modal.confirm({
+    title: s.title,
+    content: s.content,
+    okText: s.okText,
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      if (step < 3) {
+        confirmForceDelete(pool, step + 1)
+        return
+      }
+      try {
+        await storagePoolApi.remove(pool.id, true)
+        message.success('存储池已强制删除')
+        load()
+      } catch {
+        // 拦截器已提示
+      }
+    },
+  })
+}
+
 const statusLabel: Record<string, string> = {
   ACTIVE: '正常', MIGRATING: '迁移中', MIGRATED: '已迁移',
 }
@@ -267,7 +313,7 @@ function formatFileSize(bytes: number): string {
       <a-button type="primary" @click="createVisible = true">创建存储池</a-button>
     </div>
 
-    <a-table :data-source="pools" :loading="loading" row-key="id" :pagination="false">
+    <a-table :data-source="pools" :loading="loading" row-key="id" :pagination="false" :scroll="{ x: 'max-content' }" class="auto-table">
       <a-table-column title="存储池名称" data-index="poolName" :sorter="(a: StoragePool, b: StoragePool) => (a.poolName||'').localeCompare(b.poolName||'')" />
       <a-table-column title="物理机编号" data-index="instanceNumber" :width="100" :sorter="(a: StoragePool, b: StoragePool) => (a.instanceNumber||'').localeCompare(b.instanceNumber||'')" />
       <a-table-column title="绝对路径" :width="280">
@@ -288,7 +334,7 @@ function formatFileSize(bytes: number): string {
       <a-table-column title="创建时间" :width="170" :sorter="(a: StoragePool, b: StoragePool) => (a.createdAt||'').localeCompare(b.createdAt||'')">
         <template #default="{ record }">{{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
       </a-table-column>
-      <a-table-column title="操作" :width="320">
+      <a-table-column title="操作" :width="360">
         <template #default="{ record }">
           <a-tooltip :title="record.offline ? '物理实例不在线，操作不可用' : ''">
             <span>
@@ -299,9 +345,15 @@ function formatFileSize(bytes: number): string {
                 :disabled="record.offline"
                 @click="confirmMigrate(record)"
               >确认删除</a-button>
-              <a-button type="link" size="small" danger :disabled="record.offline" @click="confirmDelete(record)">删除</a-button>
             </span>
           </a-tooltip>
+          <a-button
+            v-if="record.offline && isAdmin"
+            type="link" size="small" danger @click="confirmForceDelete(record)"
+          >强制删除</a-button>
+          <a-button
+            v-else type="link" size="small" danger :disabled="record.offline" @click="confirmDelete(record)"
+          >删除</a-button>
         </template>
       </a-table-column>
     </a-table>
@@ -413,3 +465,13 @@ function formatFileSize(bytes: number): string {
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+/* platform-audit-logging-ux：表头宽度自适应、不换行 */
+.auto-table :deep(.ant-table-thead > tr > th) {
+  white-space: nowrap;
+}
+.auto-table :deep(.ant-table-tbody > tr > td) {
+  white-space: nowrap;
+}
+</style>

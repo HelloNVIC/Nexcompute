@@ -2,7 +2,7 @@
 # 需要 Go 1.23+ 与 CGO（Fyne 依赖 CGO）
 
 APP_NAME := nexcompute-agent
-VERSION := 0.1.3
+VERSION := 0.1.0
 # D1：经 ldflags 注入 internal/version.Version（替代未声明的 main.version）
 LDFLAGS := -X github.com/nexcompute/controlled-agent/internal/version.Version=$(VERSION)
 
@@ -19,3 +19,4 @@ clean:
 
 test:
 	go test ./...
+logo

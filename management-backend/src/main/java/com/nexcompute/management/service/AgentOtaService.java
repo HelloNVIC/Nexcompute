@@ -1,6 +1,7 @@
 package com.nexcompute.management.service;
 
 import com.nexcompute.management.agent.AgentCommandService;
+import com.nexcompute.management.agent.OtaProgressTracker;
 import com.nexcompute.management.audit.Audited;
 import com.nexcompute.management.common.BusinessException;
 import com.nexcompute.management.common.ErrorCode;
@@ -13,8 +14,12 @@ import com.nexcompute.management.repository.PhysicalInstanceRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
+
+import jakarta.annotation.PostConstruct;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -41,6 +46,14 @@ public class AgentOtaService {
     private final PhysicalInstanceRepository instanceRepository;
     private final AgentUpgradeTaskRepository taskRepository;
     private final AgentCommandService agentCommandService;
+    private final OtaProgressTracker otaProgressTracker;
+    private final PlatformTransactionManager transactionManager;
+    private TransactionTemplate transactionTemplate;
+
+    @PostConstruct
+    void initTx() {
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+    }
 
     /** 上传新版受控端 exe，存 ${storage.root}/agent-upgrade/{version}.exe 并记 MD5 */
     @Transactional
@@ -106,7 +119,6 @@ public class AgentOtaService {
      * payload {version, md5, downloadUrl}，downloadUrl 为 exe 源路径供受控端 file-transfer 下载。
      */
     @Audited(action = "AGENT_UPGRADE", targetType = "PHYSICAL_INSTANCE")
-    @Transactional
     public List<AgentUpgradeTask> upgrade(List<Long> instanceIds, String version) {
         if (instanceIds == null || instanceIds.isEmpty()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "未选择实例");
@@ -124,40 +136,76 @@ public class AgentOtaService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "计算 exe MD5 失败");
         }
 
-        // 先创建 PENDING 任务
-        List<AgentUpgradeTask> tasks = new ArrayList<>();
-        for (Long instanceId : instanceIds) {
-            PhysicalInstance inst = instanceRepository.findById(instanceId)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
-            AgentUpgradeTask task = AgentUpgradeTask.builder()
-                    .instanceId(instanceId)
-                    .instanceNumber(inst.getInstanceNumber())
-                    .version(safeVersion)
-                    .md5(md5)
-                    .status("PENDING")
-                    .build();
-            tasks.add(taskRepository.save(task));
-        }
+        // platform-audit-logging-ux：先在独立事务中创建并提交 PENDING 任务，
+        // 使前端"升级任务记录"在升级开始时立即可见（不阻塞于下方 waitForVersionUpgrade 的长耗时等待）
+        final String md5Final = md5;
+        List<AgentUpgradeTask> tasks = transactionTemplate.execute(status -> {
+            List<AgentUpgradeTask> list = new ArrayList<>();
+            for (Long instanceId : instanceIds) {
+                PhysicalInstance inst = instanceRepository.findById(instanceId)
+                        .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
+                AgentUpgradeTask task = AgentUpgradeTask.builder()
+                        .instanceId(instanceId)
+                        .instanceNumber(inst.getInstanceNumber())
+                        .version(safeVersion)
+                        .md5(md5Final)
+                        .status("PENDING")
+                        .build();
+                list.add(taskRepository.save(task));
+            }
+            return list;
+        });
 
         // 串行下发，单实例失败不阻断其他
         Map<String, Object> payload = Map.of("version", safeVersion, "md5", md5, "downloadUrl", downloadUrl);
         for (AgentUpgradeTask task : tasks) {
             try {
-                // 发送升级命令（受控端返回 replacing 后退出，由 updater 替换重启）
+                // D6.2：区分"命令下发失败"与"等待版本回传超时"两类失败信息
+                // —— sendCommand 抛异常若为下发前/中连接异常（命令未成功送达）即"命令下发失败"；
+                //    受控端返回 replacing 后立即退出致 WS 断开属正常退出，不算命令失败。
+                boolean commandDispatched = true;
+                String dispatchError = null;
+                String commandId = null;
                 try {
-                    agentCommandService.sendCommand(
+                    var dispatch = agentCommandService.sendCommandWithId(
                             task.getInstanceNumber(), "agent.upgrade", payload,
                             properties.getAgent().getUpgradeCommandTimeoutMs());
+                    commandId = dispatch.commandId();
+                    // D2：注册进度追踪（commandId <-> task/instance/目标版本）
+                    otaProgressTracker.register(commandId, task.getId(), task.getInstanceId(),
+                            task.getInstanceNumber(), safeVersion);
                 } catch (Exception cmdEx) {
-                    // 受控端可能在返回后立即退出致连接断开，不在此判定成败
-                    log.warn("[AgentOTA] 发送升级命令异常（受控端可能已退出）: {}", cmdEx.getMessage());
+                    // 受控端可能在返回 replacing 后立即退出致连接断开，这种异常不算命令失败
+                    String msg = String.valueOf(cmdEx.getMessage());
+                    if (msg != null && (msg.contains("replacing") || msg.contains("abrupt")
+                            || msg.contains("reset") || msg.contains("broken"))) {
+                        log.info("[AgentOTA] 受控端返回后退出致连接断开（正常）: {}", msg);
+                    } else {
+                        // 命令本身未成功送达/受控端未返回 replacing → 命令下发失败
+                        commandDispatched = false;
+                        dispatchError = "升级命令下发失败：" + msg;
+                        log.warn("[AgentOTA] 升级命令下发失败: {}", msg);
+                    }
                 }
-                // D7：等待受控端重启并回传新版本，验证通过才算成功，否则为失败
-                boolean ok = waitForVersionUpgrade(task.getInstanceId(), safeVersion,
-                        properties.getAgent().getUpgradeVersionWaitTimeoutMs());
+
+                boolean ok = false;
+                if (commandDispatched) {
+                    // D1：等待受控端重启并回传目标版本，心跳回传目标版本即 SUCCESS
+                    ok = waitForVersionUpgrade(task.getInstanceId(), safeVersion,
+                            properties.getAgent().getUpgradeVersionWaitTimeoutMs());
+                    if (!ok && commandId != null) {
+                        otaProgressTracker.onTimeout(commandId);
+                    }
+                }
+                if (commandId != null) {
+                    otaProgressTracker.finish(commandId);
+                }
                 task.setStatus(ok ? "SUCCESS" : "FAILED");
                 if (!ok) {
-                    task.setError("升级后未在超时内回传目标版本 v" + safeVersion);
+                    task.setError(commandDispatched
+                            ? "等待版本回传超时：升级后未在 " + (properties.getAgent().getUpgradeVersionWaitTimeoutMs() / 1000)
+                                + "s 内回传目标版本 " + safeVersion
+                            : dispatchError);
                 }
             } catch (Exception e) {
                 task.setStatus("FAILED");
@@ -216,10 +264,16 @@ public class AgentOtaService {
     }
 
     /** 版本号sanitize：仅允许字母数字 . _ - */
-    private String sanitizeVersion(String version) {
+    String sanitizeVersion(String version) {
         if (version == null) return "";
+        String trimmed = version.trim();
+        // platform-audit-logging-ux：版本号不加 'v' 前缀（受控端心跳上报为纯数字版本，
+        // 加 'v' 会导致 waitForVersionUpgrade 比对不匹配误判失败）
+        if (trimmed.toLowerCase().startsWith("v") && trimmed.length() > 1) {
+            trimmed = trimmed.substring(1);
+        }
         StringBuilder sb = new StringBuilder();
-        for (char c : version.trim().toCharArray()) {
+        for (char c : trimmed.toCharArray()) {
             if (Character.isLetterOrDigit(c) || c == '.' || c == '_' || c == '-') {
                 sb.append(c);
             }

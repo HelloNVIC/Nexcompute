@@ -44,6 +44,25 @@ public class AgentCommandService {
     }
 
     /**
+     * 派发命令并返回 commandId 与结果（D2：OTA 需在发送前用 commandId 注册进度追踪）。
+     */
+    public CommandDispatch sendCommandWithId(String instanceNumber, String type, Map<String, Object> payload, long timeoutMs) {
+        AgentCommand command = AgentCommand.builder()
+                .id(UUID.randomUUID().toString())
+                .type(type)
+                .token(resolveToken(instanceNumber))
+                .payload(payload)
+                .timestamp(System.currentTimeMillis())
+                .build();
+        log.info("[AgentCmd] 派发命令: instance={} type={} id={}", instanceNumber, type, command.getId());
+        AgentCommandResult result = channel.dispatchAndWait(instanceNumber, command, timeoutMs);
+        return new CommandDispatch(command.getId(), result);
+    }
+
+    /** 命令派发结果（含 commandId） */
+    public record CommandDispatch(String commandId, AgentCommandResult result) {}
+
+    /**
      * 异步派发命令（不等待结果）
      */
     public boolean fireAndForget(String instanceNumber, String type, Map<String, Object> payload) {

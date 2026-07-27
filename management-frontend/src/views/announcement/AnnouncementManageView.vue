@@ -2,7 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import dayjs from 'dayjs'
-import { announcementApi, type Announcement } from '@/api/announcement'
+import { announcementApi, type Announcement, type ReadStatusView } from '@/api/announcement'
 import { groupApi, type ResearchGroup } from '@/api/group'
 
 const loading = ref(false)
@@ -20,6 +20,13 @@ const form = reactive({
   publishMode: 'IMMEDIATE',
   publishAt: undefined as any,
 })
+
+// 公告详情（已读/未读）
+const detailVisible = ref(false)
+const detailAnn = ref<Announcement | null>(null)
+const readStatus = ref<ReadStatusView | null>(null)
+const detailLoading = ref(false)
+const reminding = ref(false)
 
 onMounted(load)
 
@@ -67,6 +74,39 @@ function confirmDelete(ann: Announcement): void {
   })
 }
 
+async function showDetail(ann: Announcement): Promise<void> {
+  detailAnn.value = ann
+  detailVisible.value = true
+  readStatus.value = null
+  detailLoading.value = true
+  try {
+    readStatus.value = await announcementApi.readStatus(ann.id)
+  } catch {
+    // 拦截器已提示
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function remindUnread(): Promise<void> {
+  if (!detailAnn.value) return
+  if (!readStatus.value || readStatus.value.unreadCount === 0) {
+    message.warning('无未读用户')
+    return
+  }
+  reminding.value = true
+  try {
+    const res = await announcementApi.remind(detailAnn.value.id)
+    message.success(`已对 ${res.reminded} 位未读用户发送邮件提醒`)
+    // 刷新名单
+    readStatus.value = await announcementApi.readStatus(detailAnn.value.id)
+  } catch {
+    // 拦截器已提示
+  } finally {
+    reminding.value = false
+  }
+}
+
 const scopeLabel: Record<string, string> = { ALL: '全体', GROUP: '指定课题组', ROLE: '指定角色' }
 const modeLabel: Record<string, string> = { IMMEDIATE: '立即', SCHEDULED: '定时' }
 </script>
@@ -105,8 +145,9 @@ const modeLabel: Record<string, string> = { IMMEDIATE: '立即', SCHEDULED: '定
       <a-table-column title="发布时间" :width="150">
         <template #default="{ record }">{{ record.publishAt ? dayjs(record.publishAt).format('MM-DD HH:mm') : '-' }}</template>
       </a-table-column>
-      <a-table-column title="操作" :width="80">
+      <a-table-column title="操作" :width="140">
         <template #default="{ record }">
+          <a-button type="link" size="small" @click="showDetail(record)">详情</a-button>
           <a-button type="link" danger size="small" @click="confirmDelete(record)">删除</a-button>
         </template>
       </a-table-column>
@@ -157,5 +198,69 @@ const modeLabel: Record<string, string> = { IMMEDIATE: '立即', SCHEDULED: '定
         </a-form-item>
       </a-form>
     </a-modal>
+
+    <!-- 公告详情：已读/未读名单 + 邮件提醒 -->
+    <a-drawer
+      v-model:open="detailVisible"
+      :title="detailAnn ? `公告详情：${detailAnn.title}` : '公告详情'"
+      width="640"
+      :footer="null"
+    >
+      <a-spin :spinning="detailLoading">
+        <a-descriptions v-if="detailAnn" :column="1" size="small" bordered style="margin-bottom: 16px">
+          <a-descriptions-item label="内容">{{ detailAnn.content }}</a-descriptions-item>
+          <a-descriptions-item label="发布人">{{ detailAnn.authorName || '-' }}</a-descriptions-item>
+          <a-descriptions-item label="发布时间">
+            {{ detailAnn.publishAt ? dayjs(detailAnn.publishAt).format('YYYY-MM-DD HH:mm') : '-' }}
+          </a-descriptions-item>
+        </a-descriptions>
+
+        <div v-if="readStatus" style="margin-bottom: 16px">
+          <a-space>
+            <a-statistic title="总数" :value="readStatus.total" />
+            <a-statistic title="已读" :value="readStatus.readCount" :value-style="{ color: '#52c41a' }" />
+            <a-statistic title="未读" :value="readStatus.unreadCount" :value-style="{ color: '#faad14' }" />
+          </a-space>
+        </div>
+
+        <a-divider orientation="left" plain>
+          未读名单（{{ readStatus?.unreadCount ?? 0 }}）
+        </a-divider>
+        <a-empty v-if="!readStatus || !readStatus.unread.length" description="无未读" />
+        <a-list v-else size="small" :data-source="readStatus.unread" :pagination="{ pageSize: 8 }">
+          <template #renderItem="{ item }">
+            <a-list-item>
+              <a-list-item-meta :title="item.realName" :description="`${item.username}${item.email ? ' · ' + item.email : ''}`" />
+            </a-list-item>
+          </template>
+        </a-list>
+
+        <a-divider orientation="left" plain>
+          已读名单（{{ readStatus?.readCount ?? 0 }}）
+        </a-divider>
+        <a-empty v-if="!readStatus || !readStatus.read.length" description="无已读" />
+        <a-list v-else size="small" :data-source="readStatus.read" :pagination="{ pageSize: 8 }">
+          <template #renderItem="{ item }">
+            <a-list-item>
+              <a-list-item-meta
+                :title="item.realName"
+                :description="`${item.username}${item.readAt ? ' · 读于 ' + dayjs(item.readAt).format('MM-DD HH:mm') : ''}`"
+              />
+            </a-list-item>
+          </template>
+        </a-list>
+
+        <div style="margin-top: 16px; text-align: right">
+          <a-button
+            type="primary"
+            :loading="reminding"
+            :disabled="!readStatus || readStatus.unreadCount === 0"
+            @click="remindUnread"
+          >
+            邮件提醒未读（{{ readStatus?.unreadCount ?? 0 }}）
+          </a-button>
+        </div>
+      </a-spin>
+    </a-drawer>
   </div>
 </template>

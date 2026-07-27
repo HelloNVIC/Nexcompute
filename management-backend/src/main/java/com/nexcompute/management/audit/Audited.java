@@ -21,4 +21,10 @@ public @interface Audited {
 
     /** 目标 ID 的 SpEL 表达式（如 #id 或 #request.containerId） */
     String targetIdExpr() default "";
+
+    /**
+     * 是否强制记录（不受审计开关影响，恒记）。
+     * 审计开关切换等需恒审计的方法置 force=true，防管理员借关闭审计掩盖痕迹（D12）。
+     */
+    boolean force() default false;
 }

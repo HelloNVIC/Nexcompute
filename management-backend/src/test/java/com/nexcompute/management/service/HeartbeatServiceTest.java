@@ -48,6 +48,8 @@ class HeartbeatServiceTest {
     private ContainerRepository containerRepository;
     @Mock
     private SseService sseService;
+    @Mock
+    private com.nexcompute.management.agent.OtaProgressTracker otaProgressTracker;
 
     @InjectMocks
     private HeartbeatService heartbeatService;

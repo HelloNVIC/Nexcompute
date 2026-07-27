@@ -4,6 +4,7 @@ import { message, Modal } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { userApi, type CreateUserPayload } from '@/api/user'
 import { groupApi, type ResearchGroup } from '@/api/group'
+import { allocationApi } from '@/api/allocation'
 import { permissionApi } from '@/api/permission'
 import type { UserInfoDto, UserRole } from '@/types'
 import { useAuthStore } from '@/stores/auth'
@@ -51,6 +52,28 @@ const roleOptions = [
 
 const roleLabel: Record<string, string> = { ADMIN: '管理员', MENTOR: '导师', STUDENT: '学生' }
 const roleColor: Record<string, string> = { ADMIN: 'red', MENTOR: 'orange', STUDENT: 'blue' }
+
+// platform-audit-logging-ux 11.1：用户详情抽屉（基本信息/角色/课题组/资源分配）
+const detailVisible = ref(false)
+const detailUser = ref<UserInfoDto | null>(null)
+const detailGroups = ref<ResearchGroup[]>([])
+const detailAllocations = ref<Array<{ instanceNumber: string; machineName?: string; allocatedAt: string; groupName: string }>>([])
+
+async function showDetail(user: UserInfoDto): Promise<void> {
+  detailUser.value = user
+  detailGroups.value = []
+  detailAllocations.value = []
+  detailVisible.value = true
+  try {
+    detailGroups.value = await userApi.userGroups(user.id)
+    // 资源分配：取该用户所在课题组的机器分配（管理员/导师/学生通用展示）
+    const all = await allocationApi.groupAllocations()
+    const groupIds = new Set(detailGroups.value.map((g) => g.id))
+    detailAllocations.value = all.filter((a) => groupIds.has(a.groupId))
+  } catch {
+    // 拦截器已提示
+  }
+}
 
 onMounted(async () => {
   await load()
@@ -181,6 +204,18 @@ function confirmDisable(user: UserInfoDto): void {
   })
 }
 
+function confirmEnable(user: UserInfoDto): void {
+  Modal.confirm({
+    title: `确认启用用户 ${user.realName}？`,
+    content: '启用后用户可恢复登录',
+    onOk: async () => {
+      await userApi.enable(user.id)
+      message.success('用户已启用')
+      load()
+    },
+  })
+}
+
 function confirmDelete(user: UserInfoDto): void {
   Modal.confirm({
     title: `确认删除用户 ${user.realName}？`,
@@ -241,12 +276,17 @@ function confirmDelete(user: UserInfoDto): void {
       </a-table-column>
       <a-table-column title="操作" :width="300">
         <template #default="{ record }">
+          <a-button type="link" size="small" @click="showDetail(record)">详情</a-button>
           <a-button type="link" size="small" @click="showEdit(record)">编辑</a-button>
           <a-button type="link" size="small" @click="showResetPassword(record)">重置密码</a-button>
           <a-button
             v-if="record.id !== auth.user?.id && record.status === 'ACTIVE'"
             type="link" danger size="small" @click="confirmDisable(record)"
           >禁用</a-button>
+          <a-button
+            v-if="record.id !== auth.user?.id && record.status !== 'ACTIVE'"
+            type="link" size="small" @click="confirmEnable(record)"
+          >启用</a-button>
           <a-button
             v-if="record.id !== auth.user?.id"
             type="link" danger size="small" @click="confirmDelete(record)"
@@ -298,5 +338,50 @@ function confirmDelete(user: UserInfoDto): void {
       <a-input-password v-model:value="resetPassword" placeholder="输入新密码" />
       <div style="font-size: 12px; color: #999; margin-top: 4px">重置后用户可用新密码登录。</div>
     </a-modal>
+
+    <!-- platform-audit-logging-ux 11.1：用户详情抽屉 -->
+    <a-drawer v-model:open="detailVisible" title="用户详情" width="640" :footer="null">
+      <a-descriptions v-if="detailUser" :column="2" bordered size="small">
+        <a-descriptions-item label="用户名">{{ detailUser.username }}</a-descriptions-item>
+        <a-descriptions-item label="姓名">{{ detailUser.realName }}</a-descriptions-item>
+        <a-descriptions-item label="角色">
+          <a-tag :color="roleColor[detailUser.role]">{{ roleLabel[detailUser.role] }}</a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item label="状态">
+          <a-tag :color="detailUser.status === 'ACTIVE' ? 'green' : 'default'">
+            {{ detailUser.status === 'ACTIVE' ? '正常' : '禁用' }}
+          </a-tag>
+        </a-descriptions-item>
+        <a-descriptions-item label="工号/学号">{{ detailUser.studentId || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="邮箱">{{ detailUser.email || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="手机">{{ detailUser.phone || '-' }}</a-descriptions-item>
+        <a-descriptions-item label="注册时间">
+          {{ detailUser.createdAt ? dayjs(detailUser.createdAt).format('YYYY-MM-DD HH:mm') : '-' }}
+        </a-descriptions-item>
+      </a-descriptions>
+
+      <a-divider orientation="left">所属课题组</a-divider>
+      <a-empty v-if="!detailGroups.length" description="无课题组" />
+      <a-list v-else size="small" :data-source="detailGroups">
+        <template #renderItem="{ item }">
+          <a-list-item>
+            <a-list-item-meta :title="item.name" :description="item.description || '课题组'" />
+          </a-list-item>
+        </template>
+      </a-list>
+
+      <a-divider orientation="left">资源分配</a-divider>
+      <a-empty v-if="!detailAllocations.length" description="无机器分配" />
+      <a-list v-else size="small" :data-source="detailAllocations">
+        <template #renderItem="{ item }">
+          <a-list-item>
+            <a-list-item-meta
+              :title="`实例 ${item.instanceNumber}`"
+              :description="`${item.groupName}${item.machineName ? ' · ' + item.machineName : ''} · 分配于 ${dayjs(item.allocatedAt).format('YYYY-MM-DD HH:mm')}`"
+            />
+          </a-list-item>
+        </template>
+      </a-list>
+    </a-drawer>
   </div>
 </template>

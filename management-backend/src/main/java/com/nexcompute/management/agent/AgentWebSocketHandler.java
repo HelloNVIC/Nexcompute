@@ -23,6 +23,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
 
     private final AgentSessionRegistry registry;
     private final ObjectMapper objectMapper;
+    private final OtaProgressTracker otaProgressTracker;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -38,9 +39,23 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         try {
-            AgentCommandResult result = objectMapper.readValue(message.getPayload(), AgentCommandResult.class);
+            String payload = message.getPayload();
+            // D2：先判是否 progress 消息（type=="progress"），progress 只更新进度不 complete future
+            if (payload.contains("\"progress\"")) {
+                ProgressMessage pm = objectMapper.readValue(payload, ProgressMessage.class);
+                if ("progress".equals(pm.getType()) && pm.getCommandId() != null) {
+                    int pct = pm.getPercent() == null ? 0 : pm.getPercent();
+                    otaProgressTracker.onProgress(pm.getCommandId(), pm.getStage(), pct);
+                    return;
+                }
+            }
+            AgentCommandResult result = objectMapper.readValue(payload, AgentCommandResult.class);
             String instanceNumber = extractInstanceNumber(session);
             log.debug("[AgentWS] 收到结果: instance={} cmd={}", instanceNumber, result.getCommandId());
+            // replacing Result：标记 ④ 段进入推断（受控端即将退出）
+            if (result.getOutput() != null && result.getOutput().contains("\"status\":\"replacing\"")) {
+                otaProgressTracker.onReplacingResult(result.getCommandId());
+            }
             registry.awaitResult(result.getCommandId(), result, 0);
         } catch (Exception e) {
             log.warn("[AgentWS] 解析结果失败: {}", e.getMessage());
@@ -52,6 +67,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         String instanceNumber = extractInstanceNumber(session);
         if (instanceNumber != null) {
             registry.unregister(instanceNumber, session);
+            // D2 ④：受控端进程退出（WS 断开），替换重启段达 100%
+            otaProgressTracker.onAgentDisconnected(instanceNumber);
         }
     }
 

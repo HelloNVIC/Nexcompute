@@ -1,6 +1,7 @@
 package com.nexcompute.management.repository;
 
 import com.nexcompute.management.domain.NotificationMessage;
+import com.nexcompute.management.domain.NotificationType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -18,6 +19,9 @@ public interface NotificationMessageRepository extends JpaRepository<Notificatio
     Page<NotificationMessage> findByUserIdOrderByCreatedAtDesc(Long userId, Pageable pageable);
 
     long countByUserIdAndIsReadFalse(Long userId);
+
+    /** 公告已读/未读名单：按 type=ANNOUNCEMENT + refId(公告 id) 查全部通知记录 */
+    List<NotificationMessage> findByTypeAndRefId(NotificationType type, Long refId);
 
     @Modifying
     @Query("UPDATE NotificationMessage n SET n.isRead = true, n.readAt = CURRENT_TIMESTAMP WHERE n.id = :id AND n.userId = :userId")

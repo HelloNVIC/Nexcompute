@@ -26,11 +26,11 @@ public class RegistrationLink {
     @Column(nullable = false, unique = true, length = 64)
     private String token; // UUID
 
-    @Column(name = "group_id", nullable = false)
-    private Long groupId; // 关联课题组（即导师课题组）
+    @Column(name = "group_id")
+    private Long groupId; // 关联课题组（学生链接=导师课题组；导师链接为空，注册时建组）
 
     @Column(name = "creator_id", nullable = false)
-    private Long creatorId; // 创建者（导师）用户 ID
+    private Long creatorId; // 创建者（导师=自己；导师邀请链接=管理员）
 
     @Column(name = "remaining_count", nullable = false)
     private Integer remainingCount; // 剩余可用次数
@@ -40,6 +40,11 @@ public class RegistrationLink {
 
     @Column(nullable = false, length = 20)
     private String status; // ACTIVE / REVOKED / EXHAUSTED / EXPIRED
+
+    /** 链接类型：STUDENT（学生加入既有组）/ MENTOR（导师注册，注册时建组） */
+    @Builder.Default
+    @Column(name = "link_type", nullable = false, length = 20)
+    private String linkType = "STUDENT";
 
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)

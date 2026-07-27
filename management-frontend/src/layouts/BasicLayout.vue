@@ -13,6 +13,7 @@ import {
   SafetyCertificateOutlined,
   NotificationOutlined,
   UserOutlined,
+  UserAddOutlined,
   LogoutOutlined,
 } from '@ant-design/icons-vue'
 import { useAuthStore, type UserRole } from '@/stores/auth'
@@ -50,12 +51,17 @@ const menus = computed<MenuItem[]>(() => {
     // platform-refinements 8.4：菜单标题按角色——MENTOR=学生资源分配、ADMIN=课题组资源分配
     { key: '/group/allocation', label: role === 'ADMIN' ? '课题组资源分配' : '学生资源分配', icon: TeamOutlined, roles: ['MENTOR', 'ADMIN'] },
     { key: '/admin/users', label: '用户与课题组管理', icon: UserOutlined, roles: ['ADMIN'] },
+    { key: '/admin/mentor-invite', label: '导师邀请注册', icon: UserAddOutlined, roles: ['ADMIN'] },
     // platform-refinements 11.5：受控端管理密码统一设置入口
     { key: '/admin/local-admin-password', label: '受控端管理密码', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
     { key: '/admin/permissions', label: '权限矩阵配置', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
     // platform-env-ota-realtime D4/D7：受控端环境文件 + OTA 升级
     { key: '/admin/env-files', label: '受控端环境', icon: DesktopOutlined, roles: ['ADMIN'] },
     { key: '/admin/agent-upgrade', label: '受控端升级', icon: DesktopOutlined, roles: ['ADMIN'] },
+    { key: '/admin/agent-logs', label: '受控端日志', icon: DesktopOutlined, roles: ['ADMIN'] },
+    { key: '/admin/audit-switch', label: '审计开关', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
+    // platform-audit-logging-ux：审计日志三角色可见（后端按 mentorIdAtOp 快照过滤）
+    { key: '/audit-logs', label: '操作审计', icon: SafetyCertificateOutlined },
     { key: '/announcements', label: '公告', icon: NotificationOutlined, roles: ['STUDENT', 'MENTOR'] },
     { key: '/announcements/manage', label: '公告管理', icon: NotificationOutlined, roles: ['ADMIN'] },
     { key: '/profile', label: '用户信息', icon: UserOutlined },

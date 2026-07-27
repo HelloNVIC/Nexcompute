@@ -3,6 +3,7 @@ package com.nexcompute.management.controller;
 import com.nexcompute.management.common.ApiResponse;
 import com.nexcompute.management.dto.LoginRequest;
 import com.nexcompute.management.dto.LoginResponse;
+import com.nexcompute.management.dto.MentorRegisterRequest;
 import com.nexcompute.management.dto.RegisterRequest;
 import com.nexcompute.management.dto.UpdateProfileRequest;
 import com.nexcompute.management.dto.UserInfoDto;
@@ -30,6 +31,12 @@ public class AuthController {
     @PostMapping("/register")
     public ApiResponse<UserInfoDto> register(@Valid @RequestBody RegisterRequest request) {
         return ApiResponse.success(authService.register(request));
+    }
+
+    /** 导师邀请注册（凭管理员发放的导师邀请令牌注册并建组） */
+    @PostMapping("/mentor-register")
+    public ApiResponse<UserInfoDto> mentorRegister(@Valid @RequestBody MentorRegisterRequest request) {
+        return ApiResponse.success(authService.registerMentor(request));
     }
 
     @GetMapping("/me")

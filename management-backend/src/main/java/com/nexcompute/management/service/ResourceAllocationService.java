@@ -3,6 +3,7 @@ package com.nexcompute.management.service;
 import com.nexcompute.management.audit.Audited;
 import com.nexcompute.management.common.BusinessException;
 import com.nexcompute.management.common.ErrorCode;
+import com.nexcompute.management.domain.EmailTrigger;
 import com.nexcompute.management.domain.MachineAllocation;
 import com.nexcompute.management.domain.PhysicalInstance;
 import com.nexcompute.management.domain.RegistrationLink;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,6 +49,7 @@ public class ResourceAllocationService {
     private final PhysicalInstanceRepository instanceRepository;
     private final ContainerRepository containerRepository;
     private final StoragePoolRepository poolRepository;
+    private final EmailService emailService;
 
     /**
      * 创建注册链接（任务 3.3）
@@ -107,19 +110,30 @@ public class ResourceAllocationService {
                                             Integer perContainerMemoryMb) {
         User student = userRepository.findById(studentId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        return allocationRepository.findByInstanceIdAndUserId(instanceId, studentId)
+        PhysicalInstance instance = instanceRepository.findById(instanceId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
+        boolean[] isNew = {false};
+        MachineAllocation allocation = allocationRepository.findByInstanceIdAndUserId(instanceId, studentId)
                 .map(existing -> {
                     existing.setGroupId(groupId != null ? groupId : existing.getGroupId());
                     existing.setPerContainerMemoryMb(perContainerMemoryMb);
                     return allocationRepository.save(existing);
                 })
-                .orElseGet(() -> allocationRepository.save(MachineAllocation.builder()
-                        .instanceId(instanceId)
-                        .userId(studentId)
-                        .groupId(groupId)
-                        .allocatedBy(SecurityUtils.getCurrentUserId())
-                        .perContainerMemoryMb(perContainerMemoryMb)
-                        .build()));
+                .orElseGet(() -> {
+                    isNew[0] = true;
+                    return allocationRepository.save(MachineAllocation.builder()
+                            .instanceId(instanceId)
+                            .userId(studentId)
+                            .groupId(groupId)
+                            .allocatedBy(SecurityUtils.getCurrentUserId())
+                            .perContainerMemoryMb(perContainerMemoryMb)
+                            .build());
+                });
+        // email-notification 5.3：新分配实例成功后异步通知学生（已存在分配的更新不重复发送）
+        if (isNew[0]) {
+            sendInstanceAllocated(student, instance);
+        }
+        return allocation;
     }
 
     /**
@@ -134,19 +148,31 @@ public class ResourceAllocationService {
         }
         List<User> members = userRepository.findByGroupId(groupId);
         Long adminId = SecurityUtils.getCurrentUserId();
-        return members.stream()
-                .map(m -> allocationRepository.findByInstanceIdAndUserId(instanceId, m.getId())
-                        .map(existing -> {
-                            existing.setGroupId(groupId);
-                            return allocationRepository.save(existing);
-                        })
-                        .orElseGet(() -> allocationRepository.save(MachineAllocation.builder()
-                                .instanceId(instanceId)
-                                .userId(m.getId())
-                                .groupId(groupId)
-                                .allocatedBy(adminId)
-                                .build())))
-                .toList();
+        PhysicalInstance instance = instanceRepository.findById(instanceId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
+        List<User> newlyAllocated = new ArrayList<>();
+        List<MachineAllocation> result = new ArrayList<>();
+        for (User m : members) {
+            MachineAllocation existing = allocationRepository
+                    .findByInstanceIdAndUserId(instanceId, m.getId()).orElse(null);
+            if (existing != null) {
+                existing.setGroupId(groupId);
+                result.add(allocationRepository.save(existing));
+            } else {
+                newlyAllocated.add(m);
+                result.add(allocationRepository.save(MachineAllocation.builder()
+                        .instanceId(instanceId)
+                        .userId(m.getId())
+                        .groupId(groupId)
+                        .allocatedBy(adminId)
+                        .build()));
+            }
+        }
+        // email-notification 5.3：新分配的成员通知（已存在分配的不重复发送）
+        for (User m : newlyAllocated) {
+            sendInstanceAllocated(m, instance);
+        }
+        return result;
     }
 
     /** 撤销分配的影响（platform-refinements #3）：该学生在该实例上的运行容器与存储池 */
@@ -219,7 +245,11 @@ public class ResourceAllocationService {
     @Audited(action = "MACHINE_DEALLOCATE", targetType = "MACHINE_ALLOCATION", targetIdExpr = "#id")
     @Transactional
     public void deallocateMachine(Long id) {
+        MachineAllocation m = allocationRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.NOT_FOUND, "分配记录不存在"));
         allocationRepository.deleteById(id);
+        // email-notification 5.4：撤销分配后异步通知被撤销用户
+        sendInstanceDeallocated(m.getUserId(), m.getInstanceId());
     }
 
     /**
@@ -234,6 +264,12 @@ public class ResourceAllocationService {
         }
         allocationRepository.deleteAll(rows);
         log.info("[Allocation] 撤销课题组 {} 在实例 {} 上的分配（{} 条）", groupId, instanceId, rows.size());
+        // email-notification 5.4：撤销分配后异步通知各被撤销用户（去重）
+        Set<Long> affectedUserIds = new HashSet<>();
+        for (MachineAllocation m : rows) affectedUserIds.add(m.getUserId());
+        for (Long uid : affectedUserIds) {
+            sendInstanceDeallocated(uid, instanceId);
+        }
         return rows.size();
     }
 
@@ -272,6 +308,38 @@ public class ResourceAllocationService {
                 "memberCount", memberIds.size(),
                 "runningContainers", running,
                 "storagePools", pools);
+    }
+
+    // ===== email-notification 5.3/5.4：实例分配/撤销邮件 =====
+
+    /** 实例分配邮件：instanceName 取 machineName（空则用编号），instanceNumber 为物理机编号。 */
+    private void sendInstanceAllocated(User student, PhysicalInstance instance) {
+        if (student == null || student.getEmail() == null || student.getEmail().isBlank()) return;
+        Map<String, Object> ctx = baseInstanceCtx(instance);
+        emailService.sendAt(EmailTrigger.INSTANCE_ALLOCATED, student, ctx);
+    }
+
+    /** 实例撤销分配邮件：按 userId 加载收件人。 */
+    private void sendInstanceDeallocated(Long userId, Long instanceId) {
+        if (userId == null) return;
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null || user.getEmail() == null || user.getEmail().isBlank()) return;
+        PhysicalInstance instance = instanceRepository.findById(instanceId).orElse(null);
+        Map<String, Object> ctx = baseInstanceCtx(instance);
+        emailService.sendAt(EmailTrigger.INSTANCE_DEALLOCATED, user, ctx);
+    }
+
+    private Map<String, Object> baseInstanceCtx(PhysicalInstance instance) {
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("operatorName", emailService.resolveOperatorName());
+        ctx.put("time", Instant.now());
+        if (instance != null) {
+            String instanceName = (instance.getMachineName() != null && !instance.getMachineName().isBlank())
+                    ? instance.getMachineName() : instance.getInstanceNumber();
+            ctx.put("instanceName", instanceName);
+            ctx.put("instanceNumber", instance.getInstanceNumber());
+        }
+        return ctx;
     }
 
     /** 学生查看分配给自己的机器 */

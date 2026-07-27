@@ -27,6 +27,9 @@ func (e *Executor) handleUpgrade(cmd *Command) (string, error) {
 	}
 	log.Printf("[upgrade] 收到升级命令: version=%s md5=%s", version, expectedMD5)
 
+	// D2：① 下发文件中 - 下载阶段回传 downloading + 已下载/总字节 percent
+	e.sendProgress(cmd.ID, StageDownloading, 0)
+
 	// 1. 下载新版 exe 至当前 exe 同目录（须同卷，跨卷 move/ren 会失败）
 	cfg := config.Get()
 	currentExePath, err := os.Executable()
@@ -37,10 +40,22 @@ func (e *Executor) handleUpgrade(cmd *Command) (string, error) {
 	newPath := filepath.Join(exeDir, "nexcompute-agent.new.exe")
 	transferID := fmt.Sprintf("ota-%s-%d", randomHex(8), time.Now().UnixNano())
 	downloader := filetransfer.NewDownloader(cfg.ServerURL, cfg.AgentToken, cfg.InstanceNumber, 0)
-	if err := downloader.Download(downloadURL, newPath, transferID, "agent-upgrade", nil); err != nil {
+	if err := downloader.Download(downloadURL, newPath, transferID, "agent-upgrade",
+		func(doneChunks, totalChunks int, doneBytes, totalBytes int64) {
+			if totalBytes > 0 {
+				pct := int(doneBytes * 100 / totalBytes)
+				if pct > 99 {
+					pct = 99
+				}
+				e.sendProgress(cmd.ID, StageDownloading, pct)
+			}
+		}); err != nil {
 		return "", fmt.Errorf("下载新版 exe 失败: %w", err)
 	}
+	e.sendProgress(cmd.ID, StageDownloading, 100)
 
+	// D2：② 校验中 - 瞬时 0->100（MD5 秒级）
+	e.sendProgress(cmd.ID, StageVerifying, 0)
 	// 2. MD5 校验（应用层，与命令携带的 md5 比对；传输层已做 SHA-256）
 	actualMD5, err := md5File(newPath)
 	if err != nil {
@@ -53,14 +68,26 @@ func (e *Executor) handleUpgrade(cmd *Command) (string, error) {
 		return "", fmt.Errorf("MD5 校验失败: 期望 %s 实际 %s", expectedMD5, actualMD5)
 	}
 	log.Println("[upgrade] MD5 校验通过")
+	e.sendProgress(cmd.ID, StageVerifying, 100)
 
+	// D2：③ 备份中 - 已复制/总字节 percent（copyFile 带进度版）
+	e.sendProgress(cmd.ID, StageBackingUp, 0)
 	// 3. 备份当前 exe（运行中 exe 可读不可写，复制到 .bak）
 	currentExe := currentExePath
 	backupPath := filepath.Join(exeDir, filepath.Base(currentExe)+".bak")
-	if err := copyFile(currentExe, backupPath); err != nil {
+	if err := copyFileWithProgress(currentExe, backupPath, func(copied, total int64) {
+		if total > 0 {
+			pct := int(copied * 100 / total)
+			if pct > 99 {
+				pct = 99
+			}
+			e.sendProgress(cmd.ID, StageBackingUp, pct)
+		}
+	}); err != nil {
 		os.Remove(newPath)
 		return "", fmt.Errorf("备份当前 exe 失败: %w", err)
 	}
+	e.sendProgress(cmd.ID, StageBackingUp, 100)
 	log.Printf("[upgrade] 已备份当前 exe -> %s", backupPath)
 
 	// 4. 写 updater.bat（ren 当前 exe -> .old -> move new -> start；失败回滚 .bak）
@@ -74,6 +101,7 @@ func (e *Executor) handleUpgrade(cmd *Command) (string, error) {
 	// 5. 拉起 updater（独立进程），随即安排优雅退出
 	launchUpdater(updaterPath, exeDir)
 
+	// D2：④ 替换重启中 - 由管理端推断（受控端进程即将退出无法回传），这里回 replacing Result 收尾
 	// 延迟 1 秒退出，确保 WS 结果先回传管理端
 	if e.quitFunc != nil {
 		go func() {

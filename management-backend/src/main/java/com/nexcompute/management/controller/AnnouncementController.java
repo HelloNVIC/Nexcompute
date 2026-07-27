@@ -74,6 +74,21 @@ public class AnnouncementController {
         return ApiResponse.success(announcementService.listAll());
     }
 
+    /** 公告已读/未读名单（管理员） */
+    @GetMapping("/{id}/read-status")
+    @RequirePermission(module = "announcement", action = RequirePermission.Action.VIEW)
+    public ApiResponse<AnnouncementService.ReadStatusView> readStatus(@PathVariable Long id) {
+        return ApiResponse.success(announcementService.getReadStatus(id));
+    }
+
+    /** 对未读名单发送邮件提醒（管理员） */
+    @PostMapping("/{id}/remind")
+    @RequirePermission(module = "announcement", action = RequirePermission.Action.EDIT)
+    public ApiResponse<java.util.Map<String, Integer>> remind(@PathVariable Long id) {
+        int count = announcementService.remindUnread(id);
+        return ApiResponse.success(java.util.Map.of("reminded", count));
+    }
+
     @Data
     public static class PublishRequest {
         private String title;

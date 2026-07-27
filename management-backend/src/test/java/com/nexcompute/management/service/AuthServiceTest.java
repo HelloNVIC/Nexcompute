@@ -10,6 +10,7 @@ import com.nexcompute.management.dto.LoginRequest;
 import com.nexcompute.management.dto.LoginResponse;
 import com.nexcompute.management.dto.RegisterRequest;
 import com.nexcompute.management.dto.UserInfoDto;
+import com.nexcompute.management.repository.GroupMemberRepository;
 import com.nexcompute.management.repository.RegistrationLinkRepository;
 import com.nexcompute.management.repository.ResearchGroupRepository;
 import com.nexcompute.management.repository.UserRepository;
@@ -42,11 +43,15 @@ class AuthServiceTest {
     @Mock
     private ResearchGroupRepository groupRepository;
     @Mock
+    private GroupMemberRepository groupMemberRepository;
+    @Mock
     private RegistrationLinkRepository registrationLinkRepository;
     @Mock
     private PasswordEncoder passwordEncoder;
     @Mock
     private JwtUtil jwtUtil;
+    @Mock
+    private EmailService emailService;
 
     @InjectMocks
     private AuthService authService;
@@ -93,7 +98,7 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("用户名或密码错误");
+                .hasMessageContaining("密码错误");
     }
 
     @Test

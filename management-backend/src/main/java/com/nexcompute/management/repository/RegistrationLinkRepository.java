@@ -15,4 +15,6 @@ public interface RegistrationLinkRepository extends JpaRepository<RegistrationLi
     List<RegistrationLink> findByCreatorIdOrderByCreatedAtDesc(Long creatorId);
 
     List<RegistrationLink> findByGroupId(Long groupId);
+
+    List<RegistrationLink> findByLinkTypeOrderByCreatedAtDesc(String linkType);
 }

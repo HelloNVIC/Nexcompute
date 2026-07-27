@@ -6,6 +6,7 @@ export type SseEventType =
   | 'ticket'
   | 'container'
   | 'storage-pool'
+  | 'instance'
   // platform-env-ota-realtime D8：右下角实时 Toast 事件
   | 'container.changed'
   | 'ticket.changed'

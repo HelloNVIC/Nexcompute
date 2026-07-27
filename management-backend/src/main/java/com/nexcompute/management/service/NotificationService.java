@@ -108,6 +108,11 @@ public class NotificationService {
                 .toList();
     }
 
+    /** 按 type + refId 查全部通知记录（公告已读/未读名单用） */
+    public List<NotificationMessage> getByTypeAndRefId(NotificationType type, Long refId) {
+        return messageRepository.findByTypeAndRefId(type, refId);
+    }
+
     /**
      * 历史消息回溯查询（任务 13.6）
      */

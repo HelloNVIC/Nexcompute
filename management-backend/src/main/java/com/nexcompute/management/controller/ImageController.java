@@ -39,6 +39,13 @@ public class ImageController {
         imageService.setVisibility(id, request.getVisibility());
         return ApiResponse.success();
     }
+
+    /** 编辑镜像应用端口与使用说明（platform-audit-logging-ux：每镜像可编辑） */
+    @PutMapping("/{id}/metadata")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageMetadata> editMetadata(@PathVariable Long id, @RequestBody EditMetadataRequest request) {
+        return ApiResponse.success(imageService.editMetadata(id, request.getAppPorts(), request.getUsageInstructions()));
+    }
     @PostMapping("/{id}/share")
     @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
     public ApiResponse<Void> share(@PathVariable Long id, @RequestBody ShareRequest request) {
@@ -120,19 +127,21 @@ public class ImageController {
                 name, tag, userId, tarPath, file.getSize(), checksum, appPortsList, usageInstructions));
     }
 
-    /** 解析前端传入的应用端口（逗号分隔，如 "8888,6006"） */
+    /** 解析前端传入的应用端口（逗号分隔，如 "8888,6006"），去重 + 校验 1-65535 */
     private List<Integer> parseAppPorts(String appPorts) {
         if (appPorts == null || appPorts.isBlank()) return null;
-        List<Integer> result = new java.util.ArrayList<>();
+        java.util.LinkedHashSet<Integer> set = new java.util.LinkedHashSet<>();
         for (String p : appPorts.split(",")) {
             String t = p.trim();
             if (t.isEmpty()) continue;
             try {
-                result.add(Integer.parseInt(t));
+                set.add(Integer.parseInt(t));
             } catch (NumberFormatException ignored) {
             }
         }
-        return result.isEmpty() ? null : result;
+        List<Integer> result = set.isEmpty() ? null : new java.util.ArrayList<>(set);
+        com.nexcompute.management.service.ImageService.validatePorts(result);
+        return result;
     }
 
     private String sha256File(String path) throws java.io.IOException {
@@ -164,6 +173,13 @@ public class ImageController {
     @Data
     public static class VisibilityRequest {
         private String visibility;
+    }
+
+    /** 编辑镜像元数据请求（应用端口 + 使用说明） */
+    @Data
+    public static class EditMetadataRequest {
+        private List<Integer> appPorts;
+        private String usageInstructions;
     }
 
     /** parse-tar 返回（platform-refinements 4.1）：选定 tar 即时解析的 name/tag/appPorts */

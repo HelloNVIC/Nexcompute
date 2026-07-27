@@ -15,6 +15,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '学生注册' },
   },
   {
+    path: '/mentor-register',
+    name: 'mentor-register',
+    component: () => import('@/views/auth/MentorRegisterView.vue'),
+    meta: { public: true, title: '导师注册' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/BasicLayout.vue'),
     redirect: '/dashboard',
@@ -86,6 +92,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/UserManageView.vue'),
         meta: { title: '用户与课题组管理', roles: ['ADMIN'] },
       },
+      // 导师邀请注册（管理员创建导师邀请链接）
+      {
+        path: 'admin/mentor-invite',
+        name: 'admin-mentor-invite',
+        component: () => import('@/views/admin/MentorInviteView.vue'),
+        meta: { title: '导师邀请注册', roles: ['ADMIN'] },
+      },
       // platform-refinements 11.5：受控端管理密码统一设置入口
       {
         path: 'admin/local-admin-password',
@@ -124,6 +137,27 @@ const routes: RouteRecordRaw[] = [
         name: 'announcement-manage',
         component: () => import('@/views/announcement/AnnouncementManageView.vue'),
         meta: { title: '公告管理', roles: ['ADMIN'] },
+      },
+      // platform-audit-logging-ux：审计日志（三角色可见性由后端按 mentorIdAtOp 快照过滤）
+      {
+        path: 'audit-logs',
+        name: 'audit-logs',
+        component: () => import('@/views/admin/AuditLogView.vue'),
+        meta: { title: '操作审计' },
+      },
+      // 受控端日志查看（管理员）
+      {
+        path: 'admin/agent-logs',
+        name: 'admin-agent-logs',
+        component: () => import('@/views/admin/AgentLogView.vue'),
+        meta: { title: '受控端日志', roles: ['ADMIN'] },
+      },
+      // 审计开关（管理员）
+      {
+        path: 'admin/audit-switch',
+        name: 'admin-audit-switch',
+        component: () => import('@/views/admin/AuditSwitchView.vue'),
+        meta: { title: '审计开关', roles: ['ADMIN'] },
       },
       // 用户信息
       {

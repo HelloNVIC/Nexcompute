@@ -3,6 +3,7 @@ package com.nexcompute.management.service;
 import com.nexcompute.management.audit.Audited;
 import com.nexcompute.management.common.BusinessException;
 import com.nexcompute.management.common.ErrorCode;
+import com.nexcompute.management.domain.EmailTrigger;
 import com.nexcompute.management.domain.GroupMember;
 import com.nexcompute.management.domain.ResearchGroup;
 import com.nexcompute.management.domain.User;
@@ -26,8 +27,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -47,6 +53,7 @@ public class UserService {
     private final ContainerRepository containerRepository;
     private final ContainerShareRepository containerShareRepository;
     private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
 
     /** 获取用户必填项配置（platform-refinements #5） */
     public UserFieldConfig getFieldConfig() {
@@ -150,6 +157,31 @@ public class UserService {
         user.setStatus("DISABLED");
         userRepository.save(user);
         log.info("[User] 用户已禁用: {}", user.getUsername());
+        // email-notification 5.2：禁用成功后异步发送禁用邮件（mandatory，用户不可关）
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            Map<String, Object> ctx = new HashMap<>();
+            ctx.put("operatorName", emailService.resolveOperatorName());
+            ctx.put("time", Instant.now());
+            emailService.sendAt(EmailTrigger.USER_DISABLED, user, ctx);
+        }
+    }
+
+    /** 启用用户（恢复可登录） */
+    @Audited(action = "USER_ENABLE", targetType = "USER", targetIdExpr = "#id")
+    @Transactional
+    public void enableUser(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        user.setStatus("ACTIVE");
+        userRepository.save(user);
+        log.info("[User] 用户已启用: {}", user.getUsername());
+        // email-notification：启用成功后异步发送启用邮件（mandatory，用户不可关）
+        if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            Map<String, Object> ctx = new HashMap<>();
+            ctx.put("operatorName", emailService.resolveOperatorName());
+            ctx.put("time", Instant.now());
+            emailService.sendAt(EmailTrigger.USER_ENABLED, user, ctx);
+        }
     }
 
     /**
@@ -245,14 +277,22 @@ public class UserService {
         return UserInfoDto.from(user, resolveGroupName(user));
     }
 
-    /** 用户所属课题组列表（platform-refinements 9.2：编辑用户弹窗回显） */
+    /**
+     * 用户所属课题组列表（platform-refinements 9.2：编辑用户弹窗回显 + 详情展示）。
+     * 含主 group_id（注册时设置）与 group_member 多对多关系，按 id 去重。
+     * 修复：邀请链接注册仅设 user.group_id 未建 group_member，致详情显示"无课题组"。
+     */
     public List<ResearchGroup> getUserGroups(Long id) {
-        userRepository.findById(id)
+        User user = userRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        return groupMemberRepository.findByUserId(id).stream()
-                .map(gm -> groupRepository.findById(gm.getGroupId()).orElse(null))
-                .filter(Objects::nonNull)
-                .toList();
+        Map<Long, ResearchGroup> byId = new LinkedHashMap<>();
+        if (user.getGroupId() != null) {
+            groupRepository.findById(user.getGroupId()).ifPresent(g -> byId.put(g.getId(), g));
+        }
+        for (GroupMember gm : groupMemberRepository.findByUserId(id)) {
+            groupRepository.findById(gm.getGroupId()).ifPresent(g -> byId.put(g.getId(), g));
+        }
+        return new ArrayList<>(byId.values());
     }
 
     private void validateGroupExists(Long groupId) {

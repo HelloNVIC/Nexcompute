@@ -42,6 +42,14 @@ public class AgentUpgradeTask {
     @Column(columnDefinition = "TEXT")
     private String error;
 
+    /** 当前升级阶段：downloading/verifying/backing_up/replacing/waiting（D2） */
+    @Column(name = "progress_stage", length = 20)
+    private String progressStage;
+
+    /** 各段百分比 JSON：{"downloading":45,"verifying":0,"backing_up":0,"replacing":0,"waiting":0}（D2） */
+    @Column(name = "stage_percents", columnDefinition = "TEXT")
+    private String stagePercents;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

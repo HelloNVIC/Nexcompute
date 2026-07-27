@@ -12,6 +12,7 @@ import com.nexcompute.management.dto.HeartbeatRequest;
 import com.nexcompute.management.repository.AgentCredentialRepository;
 import com.nexcompute.management.repository.ContainerRepository;
 import com.nexcompute.management.repository.PhysicalInstanceRepository;
+import com.nexcompute.management.agent.OtaProgressTracker;
 import com.nexcompute.management.sse.SseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +42,7 @@ public class HeartbeatService {
     private final MonitoringService monitoringService;
     private final ContainerRepository containerRepository;
     private final SseService sseService;
+    private final OtaProgressTracker otaProgressTracker;
 
     @Transactional
     public PhysicalInstance processHeartbeat(HeartbeatRequest request) {
@@ -71,6 +73,17 @@ public class HeartbeatService {
         instance.setLastHeartbeat(Instant.now());
         instance.setLastStatus(serializeStatus(request.getStatus()));
 
+        // platform-audit-logging-ux 9.3：实例状态变动经 SSE 实时推送前端刷新列表
+        try {
+            Map<String, Object> ev = new HashMap<>();
+            ev.put("instanceId", instance.getId());
+            ev.put("instanceNumber", instance.getInstanceNumber());
+            ev.put("status", instance.getStatus());
+            sseService.broadcast("instance", ev);
+        } catch (Exception e) {
+            log.debug("[Heartbeat] instance SSE 推送失败: {}", e.getMessage());
+        }
+
         if (request.getMachineName() != null) instance.setMachineName(request.getMachineName());
         // IP 优先取结构化 ipAddresses（任务 4.2），回退旧 ipAddress 字段
         if (request.getIpAddresses() != null && !request.getIpAddresses().isEmpty()) {
@@ -98,6 +111,15 @@ public class HeartbeatService {
         }
 
         instance = instanceRepository.save(instance);
+
+        // D2 ⑤：OTA 升级等待版本确认段推断 -- 首次心跳起算，agentVersion==目标即满+SUCCESS
+        if (request.getAgentVersion() != null && instance.getInstanceNumber() != null) {
+            try {
+                otaProgressTracker.onHeartbeat(instance.getInstanceNumber(), request.getAgentVersion());
+            } catch (Exception e) {
+                log.debug("[Heartbeat] OTA 进度更新失败: {}", e.getMessage());
+            }
+        }
 
         // 持久化监控快照（任务 11.1）+ SSE 推送（任务 11.4）
         persistMonitoringSnapshot(instance, instance.getLastStatus());

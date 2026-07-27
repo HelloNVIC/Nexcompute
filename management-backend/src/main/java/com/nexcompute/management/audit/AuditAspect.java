@@ -12,12 +12,18 @@ import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Component;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.lang.reflect.Method;
 
 /**
- * 审计日志 AOP 切面（任务 2.5）
+ * 审计日志 AOP 切面。
  * 拦截 @Audited 注解的方法，自动记录操作至审计日志。
+ * 写库由 AuditService 异步执行；本切面在 finally 同步设置 request 标志 audited.done，
+ * 使全局拦截器 afterCompletion 让路去重（一请求一记录，@Audited 优先，D4）。
+ * force=true 的方法（审计开关切换）不受开关影响恒记（D12）。
  */
 @Slf4j
 @Aspect
@@ -26,6 +32,7 @@ import java.lang.reflect.Method;
 public class AuditAspect {
 
     private final AuditService auditService;
+    private final AuditContextResolver auditContextResolver;
     private final SpelExpressionParser parser = new SpelExpressionParser();
     private final DefaultParameterNameDiscoverer discoverer = new DefaultParameterNameDiscoverer();
 
@@ -46,8 +53,24 @@ public class AuditAspect {
             errorMessage = ex.getMessage();
             throw ex;
         } finally {
+            // 同步设标志（在 afterCompletion 之前生效），去重兜底拦截器
+            markAuditedDone();
+            // 请求线程同步解析操作人/导师快照/客户端信息（异步线程无 SecurityContext/RequestContext）
+            AuditContext ctx = auditContextResolver.resolve();
             auditService.record(audited.action(), audited.targetType(), targetId,
-                    content, success, errorMessage);
+                    content, success, errorMessage, ctx, audited.force());
+        }
+    }
+
+    /** 同步设置 request 标志，确保晚于本切面执行的拦截器可见（D4 去重） */
+    private void markAuditedDone() {
+        try {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                HttpServletRequest request = attrs.getRequest();
+                request.setAttribute("audited.done", Boolean.TRUE);
+            }
+        } catch (Exception ignored) {
         }
     }
 

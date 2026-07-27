@@ -48,6 +48,8 @@ class StoragePoolServiceTest {
     private AgentCommandService agentCommandService;
     @Mock
     private NotificationService notificationService;
+    @Mock
+    private EmailService emailService;
 
     @InjectMocks
     private StoragePoolService storagePoolService;
@@ -246,5 +248,28 @@ class StoragePoolServiceTest {
 
         assertThatThrownBy(() -> storagePoolService.confirmMigration(1L))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void createPool_rejectsWhenStorageRootEmpty() {
+        // 8.3 受控端未设置存储池根目录 -> 拒绝建池
+        PhysicalInstance noRoot = PhysicalInstance.builder()
+                .id(1L).instanceNumber("01").status("ONLINE").storageRoot(null).build();
+        when(instanceRepository.findById(1L)).thenReturn(Optional.of(noRoot));
+
+        assertThatThrownBy(() -> storagePoolService.createPool(1L, "proj"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未设置存储池根目录");
+    }
+
+    @Test
+    void createPool_rejectsWhenStorageRootBlank() {
+        PhysicalInstance blankRoot = PhysicalInstance.builder()
+                .id(1L).instanceNumber("01").status("ONLINE").storageRoot("  ").build();
+        when(instanceRepository.findById(1L)).thenReturn(Optional.of(blankRoot));
+
+        assertThatThrownBy(() -> storagePoolService.createPool(1L, "proj"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("未设置存储池根目录");
     }
 }

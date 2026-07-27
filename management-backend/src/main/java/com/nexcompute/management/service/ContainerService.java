@@ -18,6 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 /**
@@ -27,6 +29,10 @@ import java.util.*;
 @Service
 @RequiredArgsConstructor
 public class ContainerService {
+
+    /** email-notification：共享到期时间显示格式（与邮件模板时区一致，东八区） */
+    private static final DateTimeFormatter EMAIL_TS =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.of("Asia/Shanghai"));
 
     private final ContainerRepository containerRepository;
     private final PhysicalInstanceRepository instanceRepository;
@@ -41,6 +47,7 @@ public class ContainerService {
     private final ResourceQuotaService quotaService;
     private final MachineAllocationRepository machineAllocationRepository;
     private final ContainerShareRepository containerShareRepository;
+    private final EmailService emailService;
 
     /**
      * 创建容器（任务 10.3）
@@ -488,13 +495,19 @@ public class ContainerService {
         }
         User target = userRepository.findByStudentId(targetWorkerId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND, "无此用户（工号不匹配）"));
+        boolean[] isNew = {false};
         if (!containerShareRepository.existsByContainerIdAndSharedToUserId(containerId, target.getId())) {
+            isNew[0] = true;
             containerShareRepository.save(ContainerShare.builder()
                     .containerId(containerId)
                     .sharedToUserId(target.getId())
                     .sharedBy(SecurityUtils.getCurrentUserId())
                     .expiresAt(expiresAt)
                     .build());
+        }
+        // email-notification 5.7：新共享成功后异步通知被共享人（已共享的不重复发送）
+        if (isNew[0]) {
+            sendContainerPermissionEmail(target, container, "SHARED", expiresAt);
         }
     }
 
@@ -507,7 +520,29 @@ public class ContainerService {
                 && !container.getOwnerId().equals(SecurityUtils.getCurrentUserId())) {
             throw new BusinessException(ErrorCode.PERMISSION_DENIED, "仅所有者可取消共享");
         }
-        containerShareRepository.findById(shareId).ifPresent(containerShareRepository::delete);
+        containerShareRepository.findById(shareId).ifPresent(share -> {
+            containerShareRepository.delete(share);
+            // email-notification 5.7：取消共享后异步通知被取消共享人
+            User target = userRepository.findById(share.getSharedToUserId()).orElse(null);
+            if (target != null) {
+                sendContainerPermissionEmail(target, container, "UNSHARED", share.getExpiresAt());
+            }
+        });
+    }
+
+    /** 容器权限变更邮件：changeType=SHARED/UNSHARED，sharerName=共享人 realName。 */
+    private void sendContainerPermissionEmail(User target, Container container, String changeType, Instant expiresAt) {
+        if (target.getEmail() == null || target.getEmail().isBlank()) return;
+        Map<String, Object> ctx = new HashMap<>();
+        ctx.put("operatorName", emailService.resolveOperatorName());
+        ctx.put("time", Instant.now());
+        ctx.put("containerName", container.getName());
+        ctx.put("changeType", changeType);
+        ctx.put("sharerName", emailService.resolveOperatorName());
+        if (expiresAt != null) {
+            ctx.put("expiresAt", EMAIL_TS.format(expiresAt));
+        }
+        emailService.sendAt(EmailTrigger.CONTAINER_PERMISSION_CHANGED, target, ctx);
     }
 
     /** 同机其他用户聚合统计（任务 10.9 spec: 另有 N 用户 M 容器；platform-refinements #4：管理员可见其他用户详情） */

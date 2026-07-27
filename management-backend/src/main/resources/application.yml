@@ -63,12 +63,26 @@ nexcompute:
     file-transfer-chunk-size: ${FILE_CHUNK_SIZE:4194304}     # 文件分块 4MB
     # OTA 升级超时（platform-env-ota-realtime D7：可按 exe 体积调大）
     upgrade-command-timeout-ms: ${UPGRADE_COMMAND_TIMEOUT_MS:30000}    # 发命令等回包 300s
-    upgrade-version-wait-timeout-ms: ${UPGRADE_VERSION_WAIT_TIMEOUT_MS:18000}  # 等重启回传新版本 180s
+    upgrade-version-wait-timeout-ms: ${UPGRADE_VERSION_WAIT_TIMEOUT_MS:180000}  # 等重启回传新版本 180s（与 NexcomputeProperties 默认对齐，修 18s 误判失败）
   storage:
     root: ${STORAGE_ROOT:./data/storage}                    # 管理端文件存储根目录
     image-tar-dir: ${STORAGE_ROOT:./data/storage}/images    # 镜像 tar
     public-image-dir: ${STORAGE_ROOT:./data/storage}/public-images  # 公共镜像库
     migration-staging-dir: ${STORAGE_ROOT:./data/storage}/migration  # 迁移中转
+  # email-notification D4：SMTP/品牌默认值（${ENV} 可覆盖；首启经 Flyway V28 种子入 system_config，运行时读 DB）
+  email:
+    from: ${EMAIL_FROM:cufel@cufe.edu.cn}                   # SMTP 发件人
+    host: ${EMAIL_HOST:smtp.exmail.qq.com}                  # SMTP 服务器
+    port: ${EMAIL_PORT:465}                                 # SMTP 端口
+    protocol: ${EMAIL_PROTOCOL:smtps}                       # SMTP 协议（smtps/smtp）
+    user: ${EMAIL_USER:cufel@cufe.edu.cn}                  # SMTP 认证用户名
+    passwd: ${EMAIL_PASSWD:}                                 # SMTP 认证密码（明文，GET 脱敏，仅 PUT 接受明文）
+    brand:
+      name: ${EMAIL_BRAND_NAME:合算 Nexcompute}            # 邮件品牌名
+      signature: |                                          # 邮件落款（多行）
+        - Nexcompute 管理平台
+        （此邮件由系统自动发送，请勿直接回复）
+      logo-filename: ${EMAIL_LOGO_FILENAME:}                # Logo 文件名（空=classpath 默认 PNG）
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
 
