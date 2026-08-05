@@ -39,6 +39,12 @@ public class AuthController {
         return ApiResponse.success(authService.registerMentor(request));
     }
 
+    /** 管理员邀请注册（凭管理员发放的管理员邀请令牌注册为管理员，表单复用学生注册字段） */
+    @PostMapping("/admin-register")
+    public ApiResponse<UserInfoDto> adminRegister(@Valid @RequestBody RegisterRequest request) {
+        return ApiResponse.success(authService.registerAdmin(request));
+    }
+
     @GetMapping("/me")
     public ApiResponse<UserInfoDto> me() {
         return ApiResponse.success(authService.getCurrentUserInfo(SecurityUtils.getCurrentUserId()));

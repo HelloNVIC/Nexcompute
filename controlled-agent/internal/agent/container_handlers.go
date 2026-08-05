@@ -31,6 +31,9 @@ func (e *Executor) handleContainerCreate(cmd *Command) (string, error) {
 	memoryLimit, _ := cmd.Payload["memoryLimit"].(float64)
 	shmSize, _ := cmd.Payload["shmSize"].(float64)
 	mountPath, _ := cmd.Payload["mountPath"].(string)
+	// V31：存储池在容器内的挂载点（bind mount Target），由管理端按镜像默认值/用户表单解析；
+	// 为空时回退 /workspace，保持与历史镜像兼容。
+	mountPoint, _ := cmd.Payload["mountPoint"].(string)
 	// platform-improvements 任务 2.2：对齐管理端 payload gpus 字段以便审计（受控端仍硬编码 --gpus all）
 	gpus, _ := cmd.Payload["gpus"].(string)
 	if gpus != "" {
@@ -89,12 +92,16 @@ func (e *Executor) handleContainerCreate(cmd *Command) (string, error) {
 		{Driver: "nvidia", Count: -1},
 	}
 
-	// 存储池挂载
+	// 存储池挂载（Source=宿主池路径，Target=容器内挂载点，默认 /workspace）
 	if mountPath != "" {
+		target := mountPoint
+		if target == "" {
+			target = "/workspace"
+		}
 		hostConfig.Mounts = append(hostConfig.Mounts, mount.Mount{
 			Type:   mount.TypeBind,
 			Source: mountPath,
-			Target: "/workspace",
+			Target: target,
 		})
 	}
 

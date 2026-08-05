@@ -80,6 +80,10 @@ public class ContainerService {
         // platform-refinements #6：查询受控端 docker 实际占用端口，避免与泄漏/系统外容器冲突
         Set<Integer> dockerUsedPorts = queryDockerUsedPorts(instance.getInstanceNumber());
 
+        // V31：解析存储池容器内挂载点（请求值 > 镜像默认值 > /workspace 历史默认）
+        String mountPoint = resolveMountPoint(request, image);
+        request.setMountPoint(mountPoint);
+
         // 分配端口（任务 10.2）：SSH 22 + 自定义端口
         List<Integer> containerPorts = new ArrayList<>();
         containerPorts.add(22); // SSH
@@ -127,6 +131,7 @@ public class ContainerService {
                 .imageRef(request.getImageRef())
                 .imageId(image.getId())
                 .storagePoolId(request.getStoragePoolId())
+                .mountPoint(request.getMountPoint())
                 .projectName(request.getProjectName())
                 .formSnapshot(request.getFormSnapshot())
                 .cpuLimit(request.getCpuLimit())
@@ -373,7 +378,7 @@ public class ContainerService {
         String sourceContainer = container.getDockerId() != null ? container.getDockerId() : container.getName();
         ImageMetadata image = imageService.registerCommitImage(
                 imageName, imageTag, container.getOwnerId(), sourceContainer,
-                project, note, workerId, null, null, null);
+                project, note, workerId, null, null, null, container.getMountPoint());
 
         // transferId 编码 imageId，供 file-transfer 完成回调解析置 READY（6.4）
         String transferId = "commit-" + image.getId() + "-" + UUID.randomUUID().toString().replace("-", "");
@@ -455,6 +460,17 @@ public class ContainerService {
         for (PhysicalInstance pi : instanceRepository.findAllById(instIds)) {
             instanceOnlineMap.put(pi.getId(), pi.isOnline());
         }
+        // V31：批量查询关联存储池名（列表"存储池"列展示，跨可见性直接查 DB）
+        Set<Long> poolIds = new HashSet<>();
+        for (Container c : containers) {
+            if (c.getStoragePoolId() != null) poolIds.add(c.getStoragePoolId());
+        }
+        Map<Long, String> poolNameMap = new HashMap<>();
+        if (!poolIds.isEmpty()) {
+            for (StoragePool p : poolRepository.findAllById(poolIds)) {
+                poolNameMap.put(p.getId(), p.getPoolName());
+            }
+        }
         List<ContainerShare> shares = containerShareRepository.findByContainerIdIn(containerIds);
         Set<Long> shareUserIds = shares.stream()
                 .map(ContainerShare::getSharedToUserId)
@@ -469,6 +485,8 @@ public class ContainerService {
         for (Container c : containers) {
             c.setOwnerName(ownerNameMap.getOrDefault(c.getOwnerId(), "-"));
             c.setInstanceOnline(instanceOnlineMap.getOrDefault(c.getInstanceId(), false));
+            c.setStoragePoolName(c.getStoragePoolId() != null
+                    ? poolNameMap.getOrDefault(c.getStoragePoolId(), "-") : "-");
             List<ContainerShare> cs = sharesByContainer.getOrDefault(c.getId(), List.of());
             List<Container.ShareView> views = new ArrayList<>();
             for (ContainerShare s : cs) {
@@ -604,6 +622,22 @@ public class ContainerService {
         }
     }
 
+    /**
+     * 解析存储池在容器内的挂载点（V31）。
+     * 优先级：请求值（用户表单覆盖）> 镜像默认值（image_metadata.mount_point）> /workspace（历史默认）。
+     * 解析后的值同时用于持久化容器记录与下发受控端 bind mount Target，保证审计与展示一致。
+     */
+    private String resolveMountPoint(CreateContainerRequest req, ImageMetadata image) {
+        String mp = req.getMountPoint();
+        if (mp == null || mp.isBlank()) {
+            mp = image != null ? image.getMountPoint() : null;
+        }
+        if (mp == null || mp.isBlank()) {
+            mp = "/workspace";
+        }
+        return mp.trim();
+    }
+
     private Map<String, Object> buildDockerRunPayload(CreateContainerRequest req,
                                                        List<PortAllocation> allocations,
                                                        PhysicalInstance instance) {
@@ -638,10 +672,11 @@ public class ContainerService {
         // SSH 密码
         payload.put("sshPassword", req.getSshPassword());
 
-        // 存储池挂载
+        // 存储池挂载（V31：mountPath=宿主池路径 Source，mountPoint=容器内挂载目标 Target）
         if (req.getStoragePoolId() != null) {
             poolRepository.findById(req.getStoragePoolId()).ifPresent(pool -> {
                 payload.put("mountPath", pool.getPoolPath());
+                payload.put("mountPoint", req.getMountPoint());
             });
         }
 

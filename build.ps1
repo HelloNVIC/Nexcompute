@@ -6,20 +6,22 @@
   - Management（管理端）：本地构建后端 JAR -> 构建前后端 Docker 镜像 -> docker compose 启动全栈 -> 健康检查
   - Agent（受控端）   ：(可选) 重新生成图标 -> 重建 .syso -> CGO 构建 nexcompute-agent.exe
 
-  镜像命名约定与 deploy.sh 保持一致：docker compose 的项目名（目录名小写 nexcompute）
-  + 服务名拼成镜像名 nexcompute-<service>:latest，故显式 docker build -t 预构建的镜像
-  会被 compose 复用，从而让后端走本地预编译 JAR（Dockerfile.prebuilt）。
+  镜像命名约定：统一推送到私有仓库 10.13.66.18:5002/nexcompute/<service>:<version>。
+  构建开始前会询问版本号；构建完成后会询问是否推送至私有仓库。
+  docker-compose.yml 通过 image: 引用仓库镜像，版本由 VERSION 环境变量控制（默认 latest）。
 
 .EXAMPLE
   .\build.ps1                              # 构建并部署管理端 + 构建受控端
   .\build.ps1 -Target Management           # 仅构建并部署管理端
   .\build.ps1 -Target Agent                # 仅构建受控端
   .\build.ps1 -Target Agent -RebuildIcon   # 改了 logo 后，先重新生成图标再构建
+  .\build.ps1 -Version v1.2.0              # 指定镜像版本号（跳过交互询问）
 #>
 param(
     [ValidateSet('All', 'Management', 'Agent')]
     [string]$Target = 'All',
-    [switch]$RebuildIcon
+    [switch]$RebuildIcon,
+    [string]$Version
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +41,10 @@ function Test-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
 
 # ---------------- 管理端：构建 + 部署 ----------------
 function Deploy-Management {
+    param([string]$Version = 'latest')
+
+    # 私有镜像仓库（已在 Docker Desktop daemon.json 的 insecure-registries 中配置）
+    $Registry = '10.13.66.18:5002'
     Write-Section '管理端：构建并部署'
 
     # 前置检查
@@ -48,7 +54,7 @@ function Deploy-Management {
     if (-not (Test-Path 'management-backend\gradlew.bat')) { throw '未找到 management-backend\gradlew.bat' }
 
     # 1. 构建后端 JAR（本地构建，避开 Docker 内网络问题）
-    Write-Section '[1/4] 构建后端 JAR'
+    Write-Section '[1/5] 构建后端 JAR'
     Push-Location 'management-backend'
     try {
         Write-Info 'gradlew bootJar -x test'
@@ -64,21 +70,62 @@ function Deploy-Management {
     }
     finally { Pop-Location }
 
+    # 镜像引用：私有仓库 nexcompute 命名空间
+    $frontendImage = "$Registry/nexcompute/frontend:$Version"
+    $backendImage  = "$Registry/nexcompute/backend:$Version"
+
     # 2. 构建前端 Docker 镜像（多阶段：容器内 npm build -> nginx）
-    Write-Section '[2/4] 构建前端 Docker 镜像'
-    Write-Info 'docker build nexcompute-frontend:latest（容器内执行 npm install + npm run build，首次较慢）'
-    & docker build -t nexcompute-frontend:latest -f 'management-frontend/Dockerfile' 'management-frontend/'
+    Write-Section '[2/5] 构建前端 Docker 镜像'
+    Write-Info "docker build $frontendImage（容器内执行 npm install + npm run build，首次较慢）"
+    & docker build -t $frontendImage -f 'management-frontend/Dockerfile' 'management-frontend/'
     Assert-Exit '前端镜像构建'
-    Write-Ok '前端镜像构建完成'
+    Write-Ok "前端镜像构建完成：$frontendImage"
 
     # 3. 构建后端 Docker 镜像（用预编译 app.jar，Dockerfile.prebuilt）
-    Write-Section '[3/4] 构建后端 Docker 镜像'
-    & docker build -t nexcompute-backend:latest -f 'management-backend/Dockerfile.prebuilt' 'management-backend/'
+    Write-Section '[3/5] 构建后端 Docker 镜像'
+    & docker build -t $backendImage -f 'management-backend/Dockerfile.prebuilt' 'management-backend/'
     Assert-Exit '后端镜像构建'
-    Write-Ok '后端镜像构建完成'
+    Write-Ok "后端镜像构建完成：$backendImage"
 
-    # 4. 启动全栈
-    Write-Section '[4/4] 启动 Docker Compose'
+    # 同步打 :latest 标签，便于未指定 VERSION 时 docker compose 回退使用
+    if ($Version -ne 'latest') {
+        & docker tag $frontendImage "$Registry/nexcompute/frontend:latest"
+        & docker tag $backendImage  "$Registry/nexcompute/backend:latest"
+    }
+
+    # 4. 询问是否同步（推送）到私有仓库
+    Write-Section '[4/5] 同步镜像到私有仓库'
+    Write-Host "  目标仓库：$Registry" -ForegroundColor DarkGray
+    $sync = Read-Host "是否推送镜像到 $Registry/nexcompute ？(y/N)"
+    if ($sync -match '^[Yy]') {
+        $pushTargets = @($frontendImage, $backendImage)
+        if ($Version -ne 'latest') {
+            $pushTargets += @(
+                "$Registry/nexcompute/frontend:latest",
+                "$Registry/nexcompute/backend:latest"
+            )
+        }
+        foreach ($img in $pushTargets) {
+            # containerd image store 对 insecure registry 的 HTTPS->HTTP 回退偶发失败（报 EOF），
+            # 重试即可成功，故对每个镜像最多重试 10 次。
+            $pushed = $false
+            for ($attempt = 1; $attempt -le 10; $attempt++) {
+                Write-Info "docker push $img（第 $attempt/10 次）"
+                & docker push $img
+                if ($LASTEXITCODE -eq 0) { $pushed = $true; break }
+                Write-Warn "推送失败（exit $LASTEXITCODE），2s 后重试（第 $attempt/10 次）"
+                Start-Sleep -Seconds 3
+            }
+            if (-not $pushed) { throw "推送 $img 连续 10 次失败（最后 exit $LASTEXITCODE）" }
+            Write-Ok "已推送：$img"
+        }
+    } else {
+        Write-Info '已跳过推送（本地镜像仍可直接用于 docker compose）'
+    }
+
+    # 5. 启动全栈
+    Write-Section '[5/5] 启动 Docker Compose'
+    $env:VERSION = $Version
     & docker compose up -d
     Assert-Exit 'docker compose up'
     Write-Ok '容器已启动，等待后端就绪...'
@@ -228,10 +275,19 @@ try {
     Write-Host "目标：$Target" -ForegroundColor DarkGray
     if ($RebuildIcon) { Write-Host '选项：-RebuildIcon（重新生成受控端图标）' -ForegroundColor DarkGray }
 
+    # 管理端涉及 Docker 镜像，构建开始前确认版本号
+    if ($Target -in 'All','Management') {
+        if (-not $Version) {
+            $Version = Read-Host '请输入本次构建版本号（如 v1.0.0；直接回车=latest）'
+            if (-not $Version) { $Version = 'latest' }
+        }
+        Write-Host "版本：$Version" -ForegroundColor DarkGray
+    }
+
     switch ($Target) {
-        'Management' { Deploy-Management }
+        'Management' { Deploy-Management -Version $Version }
         'Agent'     { Build-Agent }
-        'All'       { Deploy-Management; Write-Host ''; Build-Agent }
+        'All'       { Deploy-Management -Version $Version; Write-Host ''; Build-Agent }
     }
 
     Write-Host ''

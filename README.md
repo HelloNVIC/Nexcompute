@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="management-frontend/public/favicon.svg" alt="Nexcompute Logo" width="140">
+<img src="management-frontend/public/favicon.svg" alt="Nexcompute Logo" width="80">
 
-# 🖥️ Nexcompute · 合算
+# Nexcompute · 合算
 
 ### 把实验室散落的 Windows + GPU 主机，收敛成一个能远程调度的算力平台
 
@@ -319,7 +319,7 @@ SMTP（默认 smtps/465）+ 品牌模板（Logo / 落款 / 品牌名可配）。
 ## 🗄️ 数据库与迁移
 
 - DDL 由 **Flyway** 管理，`hibernate.ddl-auto=validate`（只校验不自动改表）
-- 30 个迁移脚本 `V1`~`V30`，覆盖：基础 schema、访问控制、物理实例、资源分配、存储池、容器、镜像、端口分配、监控、工单、通知、资源配额、容器共享/备注、工单编号、系统信息、**实例指纹**、环境/OTA/实时、**审计不可变**、邮件通知、邮件触发、**导师邀请注册链接** 等
+- 31 个迁移脚本 `V1`~`V31`，覆盖：基础 schema、访问控制、物理实例、资源分配、存储池、容器、镜像、端口分配、监控、工单、通知、资源配额、容器共享/备注、工单编号、系统信息、**实例指纹**、环境/OTA/实时、**审计不可变**、邮件通知、邮件触发、**导师邀请注册链接**、**容器内挂载点** 等
 - `baseline-on-migrate=true`，已有库可平滑接入
 
 ---

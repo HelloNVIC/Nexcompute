@@ -21,6 +21,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '导师注册' },
   },
   {
+    path: '/admin-register',
+    name: 'admin-register',
+    component: () => import('@/views/auth/AdminRegisterView.vue'),
+    meta: { public: true, title: '管理员注册' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/BasicLayout.vue'),
     redirect: '/dashboard',
@@ -98,6 +104,13 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-mentor-invite',
         component: () => import('@/views/admin/MentorInviteView.vue'),
         meta: { title: '导师邀请注册', roles: ['ADMIN'] },
+      },
+      // 管理员注册邀请（管理员创建 ADMIN 邀请链接，被邀请人注册为管理员）
+      {
+        path: 'admin/admin-invite',
+        name: 'admin-admin-invite',
+        component: () => import('@/views/admin/AdminInviteView.vue'),
+        meta: { title: '管理员注册邀请', roles: ['ADMIN'] },
       },
       // platform-refinements 11.5：受控端管理密码统一设置入口
       {

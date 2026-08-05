@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-08-05
+goal: 把 NAS 管理门户的邀请门控注册 + 管理员审批 + TrueNAS REST 开通能力，整体并入 Nexcompute 管理端成为管理员后台
+  NAS 分配模块

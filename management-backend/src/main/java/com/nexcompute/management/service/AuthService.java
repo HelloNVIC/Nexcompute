@@ -184,6 +184,54 @@ public class AuthService {
         return UserInfoDto.from(user, group.getName());
     }
 
+    /**
+     * 管理员邀请注册（管理员创建 ADMIN 邀请链接，被邀请人凭令牌注册为管理员）。
+     * 注册表单复用学生注册字段（RegisterRequest：姓名/工号/密码/邮箱/手机），不建课题组。
+     */
+    @Transactional
+    public UserInfoDto registerAdmin(RegisterRequest request) {
+        RegistrationLink link = registrationLinkRepository.findByToken(request.getToken())
+                .orElseThrow(() -> new BusinessException(ErrorCode.REGISTRATION_LINK_INVALID));
+
+        if (!"ADMIN".equals(link.getLinkType())) {
+            throw new BusinessException(ErrorCode.REGISTRATION_LINK_INVALID, "该链接非管理员邀请链接");
+        }
+        if (!link.isValid()) {
+            ErrorCode code = link.isExpired() ? ErrorCode.REGISTRATION_LINK_EXPIRED
+                    : ErrorCode.REGISTRATION_LINK_INVALID;
+            throw new BusinessException(code);
+        }
+
+        if (userRepository.existsByUsername(request.getStudentId())) {
+            throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS, "工号已被注册");
+        }
+
+        // 扣减次数
+        link.setRemainingCount(link.getRemainingCount() - 1);
+        if (link.getRemainingCount() <= 0) {
+            link.setStatus("EXHAUSTED");
+        }
+        registrationLinkRepository.save(link);
+
+        User user = User.builder()
+                .username(request.getStudentId())
+                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .realName(request.getRealName())
+                .role(UserRole.ADMIN)
+                .studentId(request.getStudentId())
+                .email(request.getEmail())
+                .phone(request.getPhone())
+                .status("ACTIVE")
+                .build();
+        user = userRepository.save(user);
+
+        log.info("[Auth] 管理员注册成功: {}", user.getUsername());
+
+        // email-notification：管理员注册成功后异步发送注册邮件（mandatory）
+        sendRegisteredEmail(user, null);
+        return UserInfoDto.from(user, null);
+    }
+
     /** 注册邮件：自助注册无登录上下文，操作人记"系统"；含课题组名与导师（如有）。 */
     private void sendRegisteredEmail(User user, String groupName) {
         if (user.getEmail() == null || user.getEmail().isBlank()) return;

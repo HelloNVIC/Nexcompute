@@ -41,7 +41,7 @@ public class RegistrationLink {
     @Column(nullable = false, length = 20)
     private String status; // ACTIVE / REVOKED / EXHAUSTED / EXPIRED
 
-    /** 链接类型：STUDENT（学生加入既有组）/ MENTOR（导师注册，注册时建组） */
+    /** 链接类型：STUDENT（学生加入既有组）/ MENTOR（导师注册，注册时建组）/ ADMIN（管理员注册，注册即管理员，无组） */
     @Builder.Default
     @Column(name = "link_type", nullable = false, length = 20)
     private String linkType = "STUDENT";

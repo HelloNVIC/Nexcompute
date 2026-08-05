@@ -24,6 +24,7 @@ const tarForm = reactive({
   file: null as File | null,
   appPorts: [] as number[],
   usageInstructions: '',
+  mountPoint: '',
 })
 const fileList = ref<{ uid: string; name: string; status: string; originFileObj: File }[]>([])
 
@@ -47,6 +48,7 @@ const editForm = reactive({
   tag: '',
   appPorts: [] as number[],
   usageInstructions: '',
+  mountPoint: '',
 })
 
 function openEdit(image: ImageMetadata): void {
@@ -55,6 +57,7 @@ function openEdit(image: ImageMetadata): void {
   editForm.tag = image.tag
   editForm.appPorts = [...(image.appPorts ?? [])]
   editForm.usageInstructions = image.usageInstructions ?? ''
+  editForm.mountPoint = image.mountPoint ?? ''
   editVisible.value = true
 }
 
@@ -65,8 +68,13 @@ function editPortChange(ports: (string | number)[]): void {
 async function handleEditSubmit(): Promise<void> {
   editSubmitting.value = true
   try {
-    await imageApi.editMetadata(editForm.id, editForm.appPorts, editForm.usageInstructions)
-    message.success('已更新应用端口与使用说明')
+    await imageApi.editMetadata(
+      editForm.id,
+      editForm.appPorts,
+      editForm.usageInstructions,
+      editForm.mountPoint || undefined,
+    )
+    message.success('已更新应用端口、使用说明与容器内挂载点')
     editVisible.value = false
     load()
   } catch {
@@ -98,6 +106,7 @@ function resetTarForm(): void {
   tarForm.file = null
   tarForm.appPorts = []
   tarForm.usageInstructions = ''
+  tarForm.mountPoint = ''
   fileList.value = []
 }
 
@@ -169,6 +178,7 @@ async function handleSubmit(): Promise<void> {
       tarForm.tag,
       tarForm.appPorts.length ? tarForm.appPorts : undefined,
       tarForm.usageInstructions || undefined,
+      tarForm.mountPoint || undefined,
     )
     message.success(`tar 镜像上传成功：${result.name}:${result.tag}`)
     uploadVisible.value = false
@@ -294,6 +304,14 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
           <span v-else style="color: #ccc">-</span>
         </template>
       </a-table-column>
+      <a-table-column title="容器内挂载" :width="160">
+        <template #default="{ record }">
+          <a-tooltip v-if="record.mountPoint" :title="record.mountPoint">
+            <a-tag color="geekblue">{{ record.mountPoint }}</a-tag>
+          </a-tooltip>
+          <span v-else style="color: #ccc">-</span>
+        </template>
+      </a-table-column>
       <a-table-column title="使用说明" :width="200">
         <template #default="{ record }">
           <a-tooltip v-if="record.usageInstructions" :title="record.usageInstructions">
@@ -350,6 +368,12 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
             v-model:value="tarForm.usageInstructions"
             :rows="2"
             placeholder="镜像用途、启动方式等说明（可选）"
+          />
+        </a-form-item>
+        <a-form-item label="容器内挂载">
+          <a-input
+            v-model:value="tarForm.mountPoint"
+            placeholder="如 /workspace（存储池映射到容器内的路径，创建容器时自动预填）"
           />
         </a-form-item>
         <a-form-item label="拖拽上传 tar 文件" required>
@@ -409,10 +433,10 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
       </a-form>
     </a-modal>
 
-    <!-- 编辑应用端口与使用说明 -->
+    <!-- 编辑应用端口、使用说明与容器内挂载点 -->
     <a-modal
       v-model:open="editVisible"
-      title="编辑应用端口与使用说明"
+      title="编辑应用端口、使用说明与容器内挂载"
       :confirm-loading="editSubmitting"
       @ok="handleEditSubmit"
     >
@@ -433,6 +457,12 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
             v-model:value="editForm.usageInstructions"
             :rows="4"
             placeholder="镜像用途、启动方式、访问方式等说明"
+          />
+        </a-form-item>
+        <a-form-item label="容器内挂载">
+          <a-input
+            v-model:value="editForm.mountPoint"
+            placeholder="如 /workspace（存储池映射到容器内的路径，创建容器时自动预填）"
           />
         </a-form-item>
       </a-form>

@@ -27,6 +27,7 @@ const form = reactive({
   instanceId: undefined as number | undefined,
   imageRef: '',
   storagePoolId: undefined as number | undefined,
+  mountPoint: '',
   projectName: '',
   sshPassword: '',
   remark: '',
@@ -271,8 +272,8 @@ async function load(): Promise<void> {
 }
 
 async function handleCreate(): Promise<void> {
-  if (!form.instanceId || !form.imageRef || !form.sshPassword || !form.projectName || !form.storagePoolId) {
-    message.warning('请填写必填项（物理实例、镜像、存储池、项目名、SSH 密码）')
+  if (!form.instanceId || !form.imageRef || !form.sshPassword || !form.projectName || !form.storagePoolId || !form.mountPoint) {
+    message.warning('请填写必填项（物理实例、镜像、存储池、容器内挂载点、项目名、SSH 密码）')
     return
   }
 
@@ -283,6 +284,7 @@ async function handleCreate(): Promise<void> {
     instanceId: form.instanceId,
     imageRef: form.imageRef,
     storagePoolId: form.storagePoolId,
+    mountPoint: form.mountPoint,
     projectName: form.projectName,
     cpuLimit: form.cpuLimit,
     memoryLimitMb: form.memoryLimit,
@@ -307,6 +309,7 @@ async function handleCreate(): Promise<void> {
       instanceId: form.instanceId,
       imageRef: form.imageRef,
       storagePoolId: form.storagePoolId,
+      mountPoint: form.mountPoint || undefined,
       projectName: form.projectName,
       sshPassword: form.sshPassword,
       cpuLimit: form.cpuLimit,
@@ -334,6 +337,7 @@ async function handleCreate(): Promise<void> {
 function resetForm(): void {
   form.imageRef = ''
   form.storagePoolId = undefined
+  form.mountPoint = ''
   form.projectName = ''
   form.sshPassword = ''
   form.remark = ''
@@ -442,6 +446,7 @@ watch(() => form.instanceId, async (id) => {
 })
 
 // 选择镜像后：将镜像应用端口预填到"容器内端口"（SSH:22 始终含，可增删，任务 2.7）
+// V31：同时按镜像"容器内挂载点"预填存储池在容器内的挂载路径，用户可覆盖
 watch(selectedImage, (img) => {
   if (!img) return
   const ports = new Set<number>([22])
@@ -449,6 +454,7 @@ watch(selectedImage, (img) => {
     img.appPorts.forEach((p) => ports.add(p))
   }
   form.containerPorts = Array.from(ports)
+  form.mountPoint = img.mountPoint ?? ''
 })
 </script>
 
@@ -466,6 +472,14 @@ watch(selectedImage, (img) => {
       </a-table-column>
       <a-table-column title="项目名" data-index="projectName" :width="120" :sorter="(a: Container, b: Container) => (a.projectName||'').localeCompare(b.projectName||'')" />
       <a-table-column title="镜像" data-index="imageRef" />
+      <a-table-column title="存储池" :width="140">
+        <template #default="{ record }">
+          <a-tooltip v-if="record.storagePoolName && record.storagePoolName !== '-'" :title="record.storagePoolName">
+            <span>{{ record.storagePoolName }}</span>
+          </a-tooltip>
+          <span v-else style="color: #ccc">-</span>
+        </template>
+      </a-table-column>
       <a-table-column title="备注" :width="160">
         <template #default="{ record }">
           <a-tooltip v-if="record.remark" :title="record.remark">
@@ -585,6 +599,15 @@ watch(selectedImage, (img) => {
               <a-tag v-if="p.offline" color="red" style="margin-left: 4px">离线</a-tag>
             </a-select-option>
           </a-select>
+        </a-form-item>
+        <a-form-item label="存储池的容器内挂载点" required>
+          <a-input
+            v-model:value="form.mountPoint"
+            placeholder="如 /workspace（选择镜像后按镜像默认值自动预填，可修改）"
+          />
+          <div style="font-size: 12px; color: #999; margin-top: 4px">
+            存储池在容器内的挂载路径（docker bind mount 目标），选择镜像后按镜像「容器内挂载」自动预填。
+          </div>
         </a-form-item>
         <a-form-item label="SSH 密码" required>
           <a-input-password v-model:value="form.sshPassword" placeholder="设置容器 SSH 登录密码" />

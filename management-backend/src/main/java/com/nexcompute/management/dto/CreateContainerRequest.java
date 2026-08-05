@@ -21,6 +21,12 @@ public class CreateContainerRequest {
     @NotNull(message = "存储池不能为空")
     private Long storagePoolId;
 
+    /**
+     * 存储池在容器内的挂载点（V31）：docker bind mount 的 Target。
+     * 前端选镜像时按镜像 mount_point 自动预填，用户可覆盖；空则受控端回退 /workspace。
+     */
+    private String mountPoint;
+
     /** 项目名（用于容器命名：学号-项目名-随机串） */
     @NotBlank(message = "项目名不能为空")
     private String projectName;

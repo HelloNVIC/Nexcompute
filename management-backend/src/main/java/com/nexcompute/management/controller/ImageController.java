@@ -40,11 +40,12 @@ public class ImageController {
         return ApiResponse.success();
     }
 
-    /** 编辑镜像应用端口与使用说明（platform-audit-logging-ux：每镜像可编辑） */
+    /** 编辑镜像应用端口、使用说明与容器内挂载点 */
     @PutMapping("/{id}/metadata")
     @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
     public ApiResponse<ImageMetadata> editMetadata(@PathVariable Long id, @RequestBody EditMetadataRequest request) {
-        return ApiResponse.success(imageService.editMetadata(id, request.getAppPorts(), request.getUsageInstructions()));
+        return ApiResponse.success(imageService.editMetadata(
+                id, request.getAppPorts(), request.getUsageInstructions(), request.getMountPoint()));
     }
     @PostMapping("/{id}/share")
     @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
@@ -111,7 +112,8 @@ public class ImageController {
             @RequestParam(required = false) String name,
             @RequestParam(required = false, defaultValue = "latest") String tag,
             @RequestParam(required = false) String appPorts,
-            @RequestParam(required = false) String usageInstructions) throws java.io.IOException {
+            @RequestParam(required = false) String usageInstructions,
+            @RequestParam(required = false) String mountPoint) throws java.io.IOException {
         // 保存 tar 到管理端存储
         java.nio.file.Path dir = java.nio.file.Paths.get(imageService.getProperties().getStorage().getImageTarDir());
         java.nio.file.Files.createDirectories(dir);
@@ -124,7 +126,7 @@ public class ImageController {
         String checksum = sha256File(tarPath);
         List<Integer> appPortsList = parseAppPorts(appPorts);
         return ApiResponse.success(imageService.uploadTarImage(
-                name, tag, userId, tarPath, file.getSize(), checksum, appPortsList, usageInstructions));
+                name, tag, userId, tarPath, file.getSize(), checksum, appPortsList, usageInstructions, mountPoint));
     }
 
     /** 解析前端传入的应用端口（逗号分隔，如 "8888,6006"），去重 + 校验 1-65535 */
@@ -175,11 +177,13 @@ public class ImageController {
         private String visibility;
     }
 
-    /** 编辑镜像元数据请求（应用端口 + 使用说明） */
+    /** 编辑镜像元数据请求（应用端口 + 使用说明 + 容器内挂载点） */
     @Data
     public static class EditMetadataRequest {
         private List<Integer> appPorts;
         private String usageInstructions;
+        /** 容器内挂载点（V31）：存储池映射到容器内的路径，创建容器时自动预填 */
+        private String mountPoint;
     }
 
     /** parse-tar 返回（platform-refinements 4.1）：选定 tar 即时解析的 name/tag/appPorts */

@@ -52,6 +52,7 @@ const menus = computed<MenuItem[]>(() => {
     { key: '/group/allocation', label: role === 'ADMIN' ? '课题组资源分配' : '学生资源分配', icon: TeamOutlined, roles: ['MENTOR', 'ADMIN'] },
     { key: '/admin/users', label: '用户与课题组管理', icon: UserOutlined, roles: ['ADMIN'] },
     { key: '/admin/mentor-invite', label: '导师邀请注册', icon: UserAddOutlined, roles: ['ADMIN'] },
+    { key: '/admin/admin-invite', label: '管理员注册邀请', icon: UserAddOutlined, roles: ['ADMIN'] },
     // platform-refinements 11.5：受控端管理密码统一设置入口
     { key: '/admin/local-admin-password', label: '受控端管理密码', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
     { key: '/admin/permissions', label: '权限矩阵配置', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },

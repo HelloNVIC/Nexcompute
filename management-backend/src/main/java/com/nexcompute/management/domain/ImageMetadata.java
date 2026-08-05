@@ -70,6 +70,13 @@ public class ImageMetadata {
     @Column(name = "usage_instructions", columnDefinition = "text")
     private String usageInstructions;
 
+    /**
+     * 容器内挂载点（V31）：镜像推荐的"存储池在容器内的挂载路径"。
+     * 创建容器选该镜像时自动预填到"存储池的容器内挂载点"，用户可覆盖。
+     */
+    @Column(name = "mount_point", length = 500)
+    private String mountPoint;
+
     /** 备注（commit 镜像时的备注）。 */
     @Column(name = "note", length = 500)
     private String note;

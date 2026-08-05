@@ -140,7 +140,7 @@ public class ImageService {
     @Transactional
     public ImageMetadata registerCommitImage(String name, String tag, Long ownerId, String sourceContainer,
                                              String project, String note, String sourceWorkerId,
-                                             Long sizeBytes, String checksum, String tarPath) {
+                                             Long sizeBytes, String checksum, String tarPath, String mountPoint) {
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
@@ -158,6 +158,7 @@ public class ImageService {
                 .project(project)
                 .note(note)
                 .sourceWorkerId(sourceWorkerId)
+                .mountPoint(mountPoint)
                 .checksum(checksum)
                 .status("UPLOADING")
                 .visibility(VIS_PRIVATE)
@@ -251,11 +252,11 @@ public class ImageService {
     }
 
     /**
-     * 编辑镜像应用端口与使用说明（仅所有者/管理员）。
+     * 编辑镜像应用端口、使用说明与容器内挂载点（仅所有者/管理员）。
      */
     @Audited(action = "IMAGE_EDIT_META", targetType = "IMAGE", targetIdExpr = "#imageId")
     @Transactional
-    public ImageMetadata editMetadata(Long imageId, List<Integer> appPorts, String usageInstructions) {
+    public ImageMetadata editMetadata(Long imageId, List<Integer> appPorts, String usageInstructions, String mountPoint) {
         checkOwnership(imageId);
         // 应用端口校验 + 去重（保留首次出现顺序）
         validatePorts(appPorts);
@@ -267,10 +268,19 @@ public class ImageService {
         ImageMetadata image = getImage(imageId);
         image.setAppPorts(deduped);
         image.setUsageInstructions(usageInstructions);
+        image.setMountPoint(normalizeMountPoint(mountPoint));
         ImageMetadata saved = imageRepository.save(image);
-        log.info("[Image] 元数据已更新: {}:{} appPorts={} usage={}", image.getName(), image.getTag(), deduped,
-                usageInstructions == null ? "(空)" : (usageInstructions.length() + "字"));
+        log.info("[Image] 元数据已更新: {}:{} appPorts={} usage={} mountPoint={}", image.getName(), image.getTag(), deduped,
+                usageInstructions == null ? "(空)" : (usageInstructions.length() + "字"),
+                image.getMountPoint() == null ? "(空)" : image.getMountPoint());
         return saved;
+    }
+
+    /** 容器内挂载点规范化：去空白；空字符串统一存 null（避免 NOT NULL 默认值误导）。 */
+    private String normalizeMountPoint(String mountPoint) {
+        if (mountPoint == null) return null;
+        String mp = mountPoint.trim();
+        return mp.isEmpty() ? null : mp;
     }
 
     /**
@@ -317,7 +327,7 @@ public class ImageService {
     @Transactional
     public ImageMetadata uploadTarImage(String name, String tag, Long ownerId,
                                        String tarPath, Long sizeBytes, String checksum,
-                                       List<Integer> appPortsOverride, String usageInstructions) {
+                                       List<Integer> appPortsOverride, String usageInstructions, String mountPoint) {
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
@@ -345,6 +355,7 @@ public class ImageService {
                 .status("READY")
                 .appPorts(finalAppPorts)
                 .usageInstructions(usageInstructions)
+                .mountPoint(normalizeMountPoint(mountPoint))
                 .visibility(owner.getRole() == UserRole.ADMIN ? VIS_SHARED_TO_ALL : VIS_PRIVATE)
                 .build();
         return imageRepository.save(image);

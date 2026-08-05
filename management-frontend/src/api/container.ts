@@ -11,6 +11,10 @@ export interface Container {
   instanceNumber: string
   imageRef: string
   storagePoolId?: number
+  /** 关联存储池名（V31，列表展示用，enrichContainers 批量填充） */
+  storagePoolName?: string
+  /** 存储池在容器内的挂载点（V31，docker bind mount Target） */
+  mountPoint?: string
   projectName?: string
   cpuLimit?: number
   memoryLimit?: number

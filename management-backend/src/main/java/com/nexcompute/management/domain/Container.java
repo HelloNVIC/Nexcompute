@@ -46,6 +46,13 @@ public class Container {
     @Column(name = "storage_pool_id")
     private Long storagePoolId;
 
+    /**
+     * 存储池在容器内的挂载点（V31）：docker bind mount 的 Target。
+     * 创建时取自镜像默认值（image_metadata.mount_point），用户可在表单覆盖；空则受控端回退 /workspace。
+     */
+    @Column(name = "mount_point", length = 500)
+    private String mountPoint;
+
     /** 项目名（任务 4：容器命名用 学号-项目名-随机串） */
     @Column(name = "project_name", length = 100)
     private String projectName;
@@ -101,6 +108,10 @@ public class Container {
     /** 物理实例是否在线（platform-refinements #7：离线时前端展示"物理实例不在线"） */
     @Transient
     private Boolean instanceOnline;
+
+    /** 关联存储池名（V31：列表展示，enrichContainers 批量填充） */
+    @Transient
+    private String storagePoolName;
 
     /** 共有人视图（platform-refinements #2） */
     @lombok.Data

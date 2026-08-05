@@ -1,5 +1,9 @@
 # Nexcompute 管理端全栈 Docker Compose
 # 包含：PostgreSQL + Redis + 后端（SpringBoot）+ 前端（Vue + nginx）
+#
+# 后端/前端镜像从私有仓库 10.13.66.18:5002/nexcompute 拉取，版本由 VERSION 环境变量控制：
+#   VERSION=v1.0.0 docker compose up -d   # 拉取 nexcompute/backend:v1.0.0
+# 未设置 VERSION 时回退到 :latest（build.ps1 每次构建都会同步刷新 :latest 标签）。
 
 services:
   # ---- 数据库 ----
@@ -40,9 +44,7 @@ services:
 
   # ---- 管理端后端 ----
   backend:
-    build:
-      context: ./management-backend
-      dockerfile: Dockerfile.prebuilt
+    image: 10.13.66.18:5002/nexcompute/backend:${VERSION:-latest}
     container_name: nexcompute-backend
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/nexcompute
@@ -77,9 +79,7 @@ services:
 
   # ---- 管理端前端 ----
   frontend:
-    build:
-      context: ./management-frontend
-      dockerfile: Dockerfile
+    image: 10.13.66.18:5002/nexcompute/frontend:${VERSION:-latest}
     container_name: nexcompute-frontend
     ports:
       - "80:80"

@@ -183,4 +183,63 @@ class AuthServiceTest {
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.REGISTRATION_LINK_EXPIRED);
     }
+
+    @Test
+    void registerAdmin_validLink_success() {
+        RegistrationLink link = RegistrationLink.builder()
+                .id(2L)
+                .token("admin-token")
+                .creatorId(1L)
+                .remainingCount(1)
+                .expireAt(Instant.now().plusSeconds(3600))
+                .status("ACTIVE")
+                .linkType("ADMIN")
+                .build();
+
+        RegisterRequest request = new RegisterRequest();
+        request.setToken("admin-token");
+        request.setRealName("新管理员");
+        request.setStudentId("admin002");
+        request.setPassword("pass123");
+        request.setEmail("admin2@test.com");
+        request.setPhone("13900000000");
+
+        when(registrationLinkRepository.findByToken("admin-token")).thenReturn(Optional.of(link));
+        when(userRepository.existsByUsername("admin002")).thenReturn(false);
+        when(passwordEncoder.encode("pass123")).thenReturn("encoded");
+        when(userRepository.save(any(User.class))).thenAnswer(inv -> {
+            User u = inv.getArgument(0);
+            u.setId(20L);
+            return u;
+        });
+
+        UserInfoDto result = authService.registerAdmin(request);
+
+        assertThat(result.getRealName()).isEqualTo("新管理员");
+        assertThat(result.getRole()).isEqualTo(UserRole.ADMIN);
+        assertThat(link.getRemainingCount()).isZero(); // 扣减后归零
+        assertThat(link.getStatus()).isEqualTo("EXHAUSTED"); // 归零即耗尽
+    }
+
+    @Test
+    void registerAdmin_wrongLinkType_throws() {
+        // 学生链接不能用于管理员注册
+        RegistrationLink link = RegistrationLink.builder()
+                .token("student-token")
+                .remainingCount(5)
+                .expireAt(Instant.now().plusSeconds(3600))
+                .status("ACTIVE")
+                .linkType("STUDENT")
+                .build();
+
+        RegisterRequest request = new RegisterRequest();
+        request.setToken("student-token");
+
+        when(registrationLinkRepository.findByToken("student-token")).thenReturn(Optional.of(link));
+
+        assertThatThrownBy(() -> authService.registerAdmin(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.REGISTRATION_LINK_INVALID);
+    }
 }
