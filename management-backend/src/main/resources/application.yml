@@ -6,12 +6,8 @@ server:
 spring:
   application:
     name: nexcompute-management
-  # nas-allocation D4：根 .env 作单一真实源，Spring 原生导入（properties 解析，引号剥离）
-  # 两条路径覆盖：bootRun 从 management-backend/ 跑（../.env）与 从根跑/打包后（.env）；optional 保证无 .env 回退默认
-  config:
-    import:
-      - "optional:file:.env[.properties]"
-      - "optional:file:../.env[.properties]"
+  # 环境配置统一由 docker-compose 的 environment: 注入（bootRun 则经 shell 环境变量 / application.yml 默认值）。
+  # 不再读取根 .env（spring.config.import 已移除）；${ENV:默认} 无对应环境变量时回退默认值。
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/nexcompute}
     username: ${DB_USERNAME:nexcompute}
@@ -52,7 +48,7 @@ nexcompute:
   management:
     version: ${MANAGEMENT_VERSION:0.0.1-SNAPSHOT}  # platform-env-ota-realtime：受控端"关于"展示的管理端版本
   # nas-allocation D4：NAS 分配模块配置（TrueNAS 连接 / AES 密钥 / 过期策略）
-  # .env 注入 TRUENAS_* / PASSWORD_ENC_KEY / NAS_*；无 .env 时回退默认值（verifyTls=false 适配自签 http）
+  # docker-compose environment: 注入 TRUENAS_* / PASSWORD_ENC_KEY / NAS_*；无注入时回退默认值（verifyTls=false 适配自签 http）
   nas:
     truenas:
       base-url: ${TRUENAS_BASE_URL:http://10.13.66.23}        # TrueNAS REST 基址（/api/v2.0）

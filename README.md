@@ -121,11 +121,12 @@ Nexcompute/
 │   ├── cmd/nexcompute-agent/ # 入口
 │   └── internal/{agent,docker,gui,heartbeat,filetransfer,autostart,power,security,storage,config}
 ├── openspec/               # 17 份能力规格 + 变更归档
-├── docker-compose.yml       # 全栈编排（含 PG + Redis，开发/演示用）
-├── docker-compose.prod.yml  # 生产部署编排（连外部 DB，不起 PG 容器）
-├── DEPLOY.md                # 生产部署手册
-├── build.ps1 / deploy.sh    # 一键构建部署（Win / Linux）
-├── .env.example             # 环境配置模板（TrueNAS / AES / SMTP 等）
+├── docker-compose.yml           # 全栈编排（DEV，含真实密钥 -> gitignore；由 .example 复制填值）
+├── docker-compose.example.yml   # 全栈编排模板（占位密钥，入库）
+├── docker-compose.prod.yml      # 生产编排（真实密钥 -> gitignore；连外部 DB，不起 PG 容器）
+├── docker-compose.prod.example.yml  # 生产编排模板（占位密钥，入库）
+├── DEPLOY.md                    # 生产部署手册
+├── build.ps1 / deploy.sh        # 一键构建部署（Win / Linux）
 └── docs/                    # 文档
 ```
 
@@ -187,11 +188,10 @@ git clone <your-repo-url> Nexcompute && cd Nexcompute
 
 ```bash
 # 1. 准备外部 PostgreSQL（建空库 nexcompute + 账号，Flyway 启动自动建表）
-# 2. 配置 .env（TrueNAS key / AES 密钥 / SMTP）
-cp .env.example .env
-# 3. 编辑 docker-compose.prod.yml：填 DB 地址、JWT、CORS、前端端口
-# 4. 服务器信任私有仓库（insecure-registries），见 DEPLOY.md 步骤四
-# 5. 拉取启动
+# 2. 从模板复制并填值：cp docker-compose.prod.example.yml docker-compose.prod.yml
+#    vi docker-compose.prod.yml   # 填 DB / JWT / CORS / TrueNAS / AES / SMTP（真实文件 gitignore 不入库）
+# 3. 服务器信任私有仓库（insecure-registries），见 DEPLOY.md 步骤四
+# 4. 拉取启动
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
@@ -208,7 +208,7 @@ docker compose up -d postgres redis
 
 # 2. 后端
 cd management-backend
-./gradlew bootRun        # 注：环境上 ./gradlew 可能挂起，建议直接用缓存的本机 gradle + JDK 21
+./gradlew bootRun        # 注：./gradlew 可能挂起，建议用缓存的本机 gradle + JDK 21；bootRun 用 application.yml 默认值（不再读根 .env），NAS/邮件密钥可在 IDE 运行配置或 shell export 注入
 
 # 3. 前端
 cd ../management-frontend
@@ -329,7 +329,7 @@ SMTP（默认 smtps/465）+ 品牌模板（Logo / 落款 / 品牌名可配）。
 
 ## ⚙️ 关键配置项
 
-配置经根目录 `.env` 注入（Spring `spring.config.import` + docker-compose `env_file`，**值不要加引号**），均可覆盖 `application.yml` 默认值：
+配置经 docker-compose 的 `environment:` 注入（DEV 用 `docker-compose.yml`，生产用 `docker-compose.prod.yml`，模板见 `docker-compose.example.yml`），均可覆盖 `application.yml` 默认值；本地 bootRun 则用 `application.yml` 默认值或 shell 环境变量：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -350,7 +350,7 @@ SMTP（默认 smtps/465）+ 品牌模板（Logo / 落款 / 品牌名可配）。
 | `NAS_PORTAL_BASE_URL` | localhost:5173 | 注册页基址（回退用；优先取当前请求地址） |
 | `NAS_PENDING_EXPIRE_DAYS` / `NAS_EXPIRY_SCAN_INTERVAL_HOURS` | 7 / 6 | pending 过期天数 / 扫描间隔 |
 
-完整模板见 [`.env.example`](./.env.example)。
+完整模板见 [`docker-compose.example.yml`](./docker-compose.example.yml)。
 
 ---
 

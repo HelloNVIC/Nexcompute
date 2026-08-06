@@ -1,0 +1,105 @@
+# Nexcompute 管理端 生产部署编排（模板，提交入库）
+# 精简：不含 PostgreSQL 容器，连接外部数据库；Redis 可用自带容器或外部。
+#
+# 用法：复制为 docker-compose.prod.yml（已 gitignore）后填入真实值，再启动：
+#   cp docker-compose.prod.example.yml docker-compose.prod.yml
+#   vi docker-compose.prod.yml        # 填 <...> 占位
+#   docker compose -f docker-compose.prod.yml up -d
+# 真实 docker-compose.prod.yml 不入库；本文件仅作模板与配置项说明。
+#
+# 镜像从私有仓库 10.13.66.18:5002/nexcompute 拉取（需先在 Docker 配 insecure-registries，见 DEPLOY.md）。
+
+services:
+  # ---- 缓存（可选）----
+  # 无外部 Redis 时保留本容器；若有外部 Redis，删掉本服务并把 backend.REDIS_HOST / REDIS_PASSWORD 改为外部值
+  redis:
+    image: redis:7-alpine
+    container_name: nexcompute-redis
+    volumes:
+      - nexcompute-redis-data:/data
+    restart: unless-stopped
+    networks:
+      - nexcompute
+
+  # ---- 管理端后端 ----
+  backend:
+    image: 10.13.66.18:5002/nexcompute/backend:${VERSION:-latest}
+    container_name: nexcompute-backend
+    # 全部配置内联于 environment:（不依赖 .env / env_file）；部署时编辑下方填真实值。
+    environment:
+      # ===== 数据库（连接外部 PostgreSQL，不再起 postgres 容器）=====
+      DB_URL: "jdbc:postgresql://<PG_HOST>:<PG_PORT>/nexcompute"
+      DB_USERNAME: "<PG_USER>"
+      DB_PASSWORD: "<PG_PASSWORD>"
+      # ===== Redis（默认用上面的 redis 容器；外部 Redis 改这里 + 设 REDIS_PASSWORD）=====
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      # ===== JWT 密钥（务必改成至少 64 字符的强随机串，如 openssl rand -base64 48）=====
+      JWT_SECRET: "<change-to-strong-random-secret>"
+      # ===== CORS 允许的前端访问地址（用户浏览器访问前端的地址，多个逗号分隔）=====
+      CORS_ORIGINS: "http://<服务器IP>"
+      # ===== 其他 =====
+      STORAGE_ROOT: /app/data/storage
+      MONITORING_INTERVAL: 5
+      MONITORING_RETENTION_DAYS: 30
+      HEARTBEAT_TIMEOUT: 3
+      # 管理端版本经 build.ps1 --build-arg 烤入镜像 ENV（见 management-backend/Dockerfile.prebuilt），此处不注入
+      # ===== TrueNAS REST API（NAS 分配模块）=====
+      TRUENAS_BASE_URL: "http://<truenas-host>"
+      TRUENAS_API_KEY: "<truenas-api-key>"
+      TRUENAS_VERIFY_TLS: false
+      TRUENAS_TIMEOUT_SECONDS: 30
+      TRUENAS_RETRIES: 2
+      # TRUENAS_USER_HOME_PARENT: "/mnt/tank/home"   # 需 SSH 登录则取消注释
+      # ===== AES-GCM 密码加密密钥（base64-urlsafe 32 字节）=====
+      PASSWORD_ENC_KEY: "<base64-urlsafe-32byte-key>"
+      # ===== NAS 分配模块行为参数 =====
+      NAS_PORTAL_BASE_URL: "http://<服务器IP>"
+      NAS_PENDING_EXPIRE_DAYS: 7
+      NAS_EXPIRY_SCAN_INTERVAL_HOURS: 6
+      # ===== SMTP / 邮件（NAS 提交/激活/拒绝通知等；空 EMAIL_PASSWD = 不发送）=====
+      EMAIL_FROM: "<smtp-from-email>"
+      EMAIL_HOST: "<smtp-host>"
+      EMAIL_PORT: 465
+      EMAIL_PROTOCOL: "smtps"
+      EMAIL_USER: "<smtp-user>"
+      EMAIL_PASSWD: "<smtp-auth-code>"
+      EMAIL_BRAND_NAME: "合算 Nexcompute"
+    # 后端对外暴露 8080：受控端直连（ServerURL=http://<服务器IP>:8080）+ 直连 API 调试。
+    # 若仅用前端 nginx(80) 反代 /api（受控端改连 http://<服务器IP>/api/agent/*），可注释掉本端口。
+    ports:
+      - "8080:8080"
+    volumes:
+      - nexcompute-storage:/app/data/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    networks:
+      - nexcompute
+
+  # ---- 管理端前端（nginx 静态 + 反代 /api 到 backend:8080）----
+  frontend:
+    image: 10.13.66.18:5002/nexcompute/frontend:${VERSION:-latest}
+    container_name: nexcompute-frontend
+    ports:
+      # 左侧 = 宿主机端口（用户访问 http://<服务器IP>:<左侧端口>）；右侧 80 固定（容器内 nginx）
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - nexcompute
+
+volumes:
+  nexcompute-storage:
+  nexcompute-redis-data:
+
+networks:
+  nexcompute:
+    driver: bridge

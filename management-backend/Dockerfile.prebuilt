@@ -9,5 +9,9 @@ RUN mkdir -p /app/data/storage/images /app/data/storage/public-images /app/data/
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
     CMD curl -f http://localhost:8080/api/ping || exit 1
 EXPOSE 8080
+# 管理端版本（"关于"展示）；build.ps1 经 --build-arg MANAGEMENT_VERSION=$VERSION 烤入镜像。
+# 运行时 application.yml ${MANAGEMENT_VERSION:0.0.1-SNAPSHOT} 读取此 ENV；compose 不传则用烤入值。
+ARG MANAGEMENT_VERSION=0.0.1-SNAPSHOT
+ENV MANAGEMENT_VERSION=${MANAGEMENT_VERSION}
 ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Dfile.encoding=UTF-8"
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

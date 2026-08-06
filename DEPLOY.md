@@ -67,77 +67,49 @@ ALTER DATABASE nexcompute OWNER TO nexcompute;  -- 可选：让 nexcompute 成�
 
 ---
 
-## 4. 步骤二：准备 .env 配置
+## 4. 步骤二：编辑 docker-compose.prod.yml 填入配置
 
-在服务器部署目录（与 `docker-compose.prod.yml` 同目录）创建 `.env`，内容从仓库根目录 `.env.example` 复制后修改：
-
-```bash
-# 在服务器上（部署目录）：
-cp .env.example .env
-vi .env
-```
-
-`.env` 必须填的关键项（**值不要加引号**）：
-
-```ini
-# TrueNAS REST API
-TRUENAS_BASE_URL=http://10.13.66.23        # 改成你的 TrueNAS 地址
-TRUENAS_API_KEY=2-xxxxxxxxxxxxxxxx          # TrueNAS API key（须 ACCOUNT_WRITE 角色）
-TRUENAS_VERIFY_TLS=false
-TRUENAS_TIMEOUT_SECONDS=30
-TRUENAS_RETRIES=2
-# TRUENAS_USER_HOME_PARENT=/mnt/tank/home   # 需 SSH 登录则设置 home 父目录
-
-# AES-GCM 密码加密密钥（生成：python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"）
-PASSWORD_ENC_KEY=生成一个32字节base64串=
-
-# NAS 注册页基址（仅回退用；注册链接优先取当前请求地址）
-NAS_PORTAL_BASE_URL=http://<服务器IP>:<前端端口>
-
-# pending 过期扫描
-NAS_PENDING_EXPIRE_DAYS=7
-NAS_EXPIRY_SCAN_INTERVAL_HOURS=6
-
-# SMTP（NAS 开通/拒绝/提交等邮件通知用）
-EMAIL_FROM=cufel@cufe.edu.cn
-EMAIL_HOST=smtp.exmail.qq.com
-EMAIL_PORT=465
-EMAIL_PROTOCOL=smtps
-EMAIL_USER=cufel@cufe.edu.cn
-EMAIL_PASSWD=你的SMTP授权码
-EMAIL_BRAND_NAME=合算 Nexcompute
-```
-
-> `.env` 中的 `DB_*` / `JWT_SECRET` / `CORS_ORIGINS` 会被 `docker-compose.prod.yml` 的 `environment:` 覆盖（见下一步），所以 DB/JWT/CORS 在 compose 里改即可，`.env` 专注 TrueNAS / AES / SMTP。
-
----
-
-## 5. 步骤三：编辑 docker-compose.prod.yml
-
-仓库根目录已有 `docker-compose.prod.yml`。复制到服务器后，编辑填入实际值：
+仓库入库的是模板 `docker-compose.prod.example.yml`；真实 `docker-compose.prod.yml`（含真实密钥）已 gitignore 不入库。部署时从模板复制一份再填值：
 
 ```bash
-vi docker-compose.prod.yml
+cp docker-compose.prod.example.yml docker-compose.prod.yml   # 真实文件 gitignore，不入库
+vi docker-compose.prod.yml      # 全文搜 `<` 定位占位并填真实值
 ```
 
-需替换的占位（全文搜索 `<` 即可定位）：
+全部环境配置已内联在 `backend.environment:`（**不再使用 `.env`**）。需替换的占位：
 
 | 占位 | 说明 | 示例 |
 |---|---|---|
-| `<PG_HOST>` | 外部 PostgreSQL 主机 | `10.13.66.18` |
-| `<PG_PORT>` | PG 端口 | `5432` |
-| `<PG_USER>` | PG 用户名 | `nexcompute` |
-| `<PG_PASSWORD>` | PG 密码 | `你的强密码` |
-| `<服务器IP>` | 部署服务器对外 IP | `192.168.1.50` |
-| `<前端端口>` | 前端访问端口 | `80`（或 `8080`） |
-| `<改成强随机密钥-至少64字符>` | JWT 签名密钥 | 用 `openssl rand -base64 48` 生成 |
+| `<PG_HOST>` / `<PG_PORT>` | 外部 PostgreSQL 主机 / 端口 | `10.13.66.18` / `5432` |
+| `<PG_USER>` / `<PG_PASSWORD>` | PG 账号 / 密码 | `nexcompute` / 强密码 |
+| `<change-to-strong-random-secret>` | JWT 签名密钥（>=64 字符） | `openssl rand -base64 48` 生成 |
+| `<truenas-host>` | TrueNAS REST 地址 | `10.13.66.23` |
+| `<truenas-api-key>` | TrueNAS API key（须 ACCOUNT_WRITE 角色） | `2-xxxx...` |
+| `<base64-urlsafe-32byte-key>` | AES-GCM 密码加密密钥 | 见下方生成命令 |
+| `<smtp-from-email>` / `<smtp-host>` / `<smtp-user>` / `<smtp-auth-code>` | SMTP 发件 / 主机 / 账号 / 授权码 | `cufel@cufe.edu.cn` / `smtp.exmail.qq.com` / ... |
+| `<服务器IP>` | 部署服务器对外 IP（CORS / NAS 注册页基址） | `192.168.1.50` |
+
+**AES 密钥生成**（base64-urlsafe 32 字节）：
+
+```bash
+python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+```
+
+> Redis：默认用模板自带的 redis 容器（`REDIS_HOST: redis`，无密码）；若连外部 Redis，删掉 `redis` 服务，把 `REDIS_HOST` 改为外部地址并填 `REDIS_PASSWORD`。
+> 前端端口默认 `80:80`（访问 `http://<服务器IP>`）；改端口改 `frontend.ports` 左侧。
+> YAML 中已带引号的值保持引号；新增值若含 `:`、空格、`#` 等特殊字符需加引号。
+> 若需新用户开 SSH 登录，取消 `# TRUENAS_USER_HOME_PARENT: "/mnt/tank/home"` 注释并填 home 父目录（空 = 仅 SMB）。
+
+---
+
+## 5. 步骤三：端口与地址 / Redis
+
+> 配置与密钥填法见上一步（步骤二）；本步只讲端口、访问地址与 Redis。
 
 ### 端口与地址怎么改
 
-- **前端访问地址** = `http://<服务器IP>:<前端端口>`。
-  - 改前端端口：改 `frontend.ports` 左侧，如 `- "8080:80"` → 访问 `http://<IP>:8080`。
-- **后端 API**：默认走前端同源（`http://<前端地址>/api/...`），经 nginx 反代到后端容器，**无需对外暴露后端端口**。
-  - 如需直连后端 API（受控端直连、调试），取消 `backend.ports` 注释，如 `- "8080:8080"` → 后端 API `http://<IP>:8080/api`。
+- **前端访问地址** = `http://<服务器IP>`（默认 `frontend.ports: 80:80`，改端口改左侧）。
+- **后端 API**：默认经前端 nginx(80) 反代 `/api`（同源 `http://<服务器IP>/api/...`）；同时默认暴露 `backend.ports: 8080:8080` 供**受控端直连**（ServerURL `http://<服务器IP>:8080`）与直连 API 调试。不需要直连可注释掉该端口（受控端则改连 `http://<服务器IP>/api/agent/*`）。
 - **`CORS_ORIGINS`**：填用户浏览器访问前端的地址（同源时也填，保险）。多个逗号分隔，如 `http://192.168.1.50,http://192.168.1.50:8080`。
 - **改后端容器端口**（一般不用）：后端容器内固定 `8080`，nginx 反代目标也是 `backend:8080`，无需改动。
 
@@ -179,7 +151,7 @@ docker pull 10.13.66.18:5002/nexcompute/frontend:latest
 
 ## 7. 步骤五：拉取镜像并启动
 
-在部署目录（含 `docker-compose.prod.yml` 与 `.env`）执行：
+在部署目录（含 `docker-compose.prod.yml`）执行：
 
 ```bash
 # 拉取最新镜像
@@ -213,7 +185,7 @@ docker logs -f nexcompute-backend    # 看后端日志，等待 "Started Managem
 ## 9. 常见问题
 
 ### Q1：后端启动失败 `password authentication failed for user nexcompute`
-`.env` 或 compose 里 `DB_PASSWORD` **加了引号**。Spring 的 properties 解析器**不剥离引号**，`DB_PASSWORD="x"` 会被读成带引号。**值不要加引号**：`DB_PASSWORD=你的密码`（密码含 `@`/`=` 也不要加）。
+`docker-compose.prod.yml` 里 `backend.DB_PASSWORD` 与外部 PostgreSQL 实际密码不一致，或值首尾被引号 / 空格污染。YAML 会剥离单层引号（`"x"` -> `x`），但多层引号（如 `'\"x\"'`）会把引号当值。保持 `DB_PASSWORD: 你的密码` 即可，密码含 `@`/`=` 无需加引号。
 
 ### Q2：前端能打开但登录提示"网络异常" / `/api` 404
 - 确认 `nexcompute-backend` 容器已 `Started`：`docker logs nexcompute-backend`。
@@ -227,8 +199,8 @@ docker logs -f nexcompute-backend    # 看后端日志，等待 "Started Managem
 - `TRUENAS_BASE_URL` 必须后端容器**能访问**到的地址（若 TrueNAS 在内网，确保服务器与 TrueNAS 网络通）。
 - `TRUENAS_API_KEY` 须属 ACCOUNT_WRITE 角色（否则 `user.create` 在审批时被拒）。启动 ping 失败**不阻断**启动，仅 WARN，审批时才暴露。
 
-### Q5：如何改后端端口 / 直连后端 API
-取消 `docker-compose.prod.yml` 里 `backend.ports` 注释，如 `- "9000:8080"`，则后端 API 直连 `http://<IP>:9000/api`。受控端配置的管理端地址用这个。
+### Q5：后端端口 / 受控端直连
+`docker-compose.prod.yml` 默认暴露 `backend.ports: 8080:8080`，后端 API 直连 `http://<服务器IP>:8080/api`，受控端 ServerURL 用 `http://<服务器IP>:8080`。改端口改左侧（如 `- "9000:8080"` -> `http://<IP>:9000`）；若仅用前端 nginx(80) 反代 /api（受控端改连 `http://<服务器IP>/api/agent/*`），可注释掉该端口。
 
 ### Q6：前后端分机部署（前端 A 机、后端 B 机）
 前端 nginx 把 `/api` 反代到 `backend:8080`（同 compose service 名）。**分机时**需改 `management-frontend/nginx.conf` 的 `proxy_pass http://backend:8080` 为后端实际地址并**重建前端镜像**。**推荐同机部署**（用一个 compose 文件起 frontend+backend）避免改 nginx。
@@ -251,9 +223,8 @@ docker compose -f docker-compose.prod.yml up -d     # 滚动重启
 
 ```
 部署目录/
-├── docker-compose.prod.yml   # 生产编排（编辑填值）
-├── .env                      # TrueNAS / AES / SMTP 等密钥（gitignore 不入库）
-└── （可选）.env.example       # 模板参考
+├── docker-compose.prod.example.yml   # 模板（入库；cp 为下面真实文件后填值）
+└── docker-compose.prod.yml           # 真实编排（gitignore 不入库；填好真实值）
 ```
 
-镜像无需本地构建——全部从 `10.13.66.18:5002/nexcompute/{backend,frontend}` 拉取。
+镜像无需本地构建--全部从 `10.13.66.18:5002/nexcompute/{backend,frontend}` 拉取。

@@ -100,6 +100,13 @@ func (r *Reporter) Stop() {
 }
 
 func (r *Reporter) sendHeartbeat() {
+	r.doHeartbeat(true)
+}
+
+// doHeartbeat 发送一次心跳。allowReregister=true 时，若管理端报告物理实例不存在(4001)
+// 则清本地凭证并立即重发一次（空 instanceId/Number 触发服务端首次注册 -> 重新分配编号/token）。
+// 场景：服务端 DB 重建/迁移或实例被删后，受控端仍持旧编号，心跳被拒 4001 -> 自动重新注册。
+func (r *Reporter) doHeartbeat(allowReregister bool) {
 	status, err := sysinfo.Collect()
 	if err != nil {
 		log.Printf("[heartbeat] 采集系统状态失败: %v", err)
@@ -142,11 +149,22 @@ func (r *Reporter) sendHeartbeat() {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[heartbeat] 管理端返回 %d", resp.StatusCode)
+		code := parseErrorCode(resp)
+		log.Printf("[heartbeat] 管理端返回 %d (code=%d)", resp.StatusCode, code)
 		r.mu.Lock()
 		r.connected = false
 		r.lastError = "管理端返回 " + resp.Status
 		r.mu.Unlock()
+		// 物理实例不存在（服务端 DB 无此实例，如重建/迁移/被删）：清本地凭证并立即重新注册
+		if code == 4001 && allowReregister && (r.cfg.InstanceID != 0 || r.cfg.InstanceNumber != "") {
+			log.Printf("[heartbeat] 物理实例不存在，清凭证并重新注册")
+			_ = config.Update(func(c *config.Config) {
+				c.InstanceID = 0
+				c.InstanceNumber = ""
+				c.AgentToken = ""
+			})
+			r.doHeartbeat(false) // 立即重发一次（首次注册路径），不再次递归
+		}
 		return
 	}
 
@@ -189,6 +207,18 @@ func (r *Reporter) sendHeartbeat() {
 			log.Println("[heartbeat] 全局管理员密码已同步")
 		}
 	}
+}
+
+// parseErrorCode 从心跳错误响应体解析业务错误码（{"code":xxxx}）；无法解析返回 0。
+// 用于识别 4001（物理实例不存在）以触发清凭证重新注册。
+func parseErrorCode(resp *http.Response) int {
+	var body struct {
+		Code int `json:"code"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0
+	}
+	return body.Code
 }
 
 // collectContainerStatuses 采集本机各容器运行状态（任务 4.1）。

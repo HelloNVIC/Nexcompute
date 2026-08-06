@@ -219,6 +219,10 @@ public class StoragePoolService {
         requirePoolInstanceOnline(pool);
         PhysicalInstance targetInstance = instanceRepository.findById(targetInstanceId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INSTANCE_NOT_FOUND));
+        // 前置校验：目标受控端未设置存储池根目录则拒绝迁移（与建池一致，根目录状态经心跳落库 storageRoot）
+        if (targetInstance.getStorageRoot() == null || targetInstance.getStorageRoot().isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "目标受控端未设置存储池根目录，请先在受控端设置根目录");
+        }
 
         // 禁止迁移到同一物理机（无意义，且会触发源/目标路径冲突）
         if (targetInstanceId.equals(pool.getInstanceId())) {

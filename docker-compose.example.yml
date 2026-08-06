@@ -1,0 +1,141 @@
+# Nexcompute 管理端全栈 Docker Compose（模板，提交入库）
+# 包含：PostgreSQL + Redis + 后端（SpringBoot）+ 前端（Vue + nginx）
+#
+# 用法：复制为 docker-compose.yml（已 gitignore）后填入真实密钥，再 docker compose up -d。
+#   cp docker-compose.example.yml docker-compose.yml
+#   vi docker-compose.yml        # 填 <...> 占位的密钥
+# 真实 docker-compose.yml 不入库；本文件仅作模板与配置项说明。
+#
+# 后端/前端镜像从私有仓库 10.13.66.18:5002/nexcompute 拉取，版本由 VERSION 环境变量控制：
+#   VERSION=v1.0.0 docker compose up -d   # 拉取 nexcompute/backend:v1.0.0
+# 未设置 VERSION 时回退到 :latest（build.ps1 每次构建都会同步刷新 :latest 标签）。
+
+services:
+  # ---- 数据库 ----
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexcompute-postgres
+    environment:
+      POSTGRES_DB: nexcompute
+      POSTGRES_USER: nexcompute
+      POSTGRES_PASSWORD: <postgres-password>      # 改成强密码
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexcompute-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexcompute"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - nexcompute
+
+  # ---- 缓存与消息队列 ----
+  redis:
+    image: redis:7-alpine
+    container_name: nexcompute-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - nexcompute-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - nexcompute
+
+  # ---- 管理端后端 ----
+  backend:
+    image: 10.13.66.18:5002/nexcompute/backend:${VERSION:-latest}
+    container_name: nexcompute-backend
+    # 全部配置内联于 environment:（不依赖 .env / env_file）；改配置直接编辑下方即可。
+    environment:
+      # ===== 数据库（容器内连 postgres 服务，非 localhost）=====
+      DB_URL: jdbc:postgresql://postgres:5432/nexcompute
+      DB_USERNAME: nexcompute
+      DB_PASSWORD: <postgres-password>            # 与上面 postgres.POSTGRES_PASSWORD 一致
+      # ===== Redis（容器内连 redis 服务）=====
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # ===== JWT 签名密钥（生产务必替换为强随机串，>=64 字符；如 openssl rand -base64 48）=====
+      JWT_SECRET: <change-to-strong-random-secret>
+      # ===== CORS 允许的前端来源（用户浏览器访问前端的地址，多个逗号分隔）=====
+      CORS_ORIGINS: http://localhost,http://localhost:5173
+      # ===== 管理端文件存储根（容器内）=====
+      STORAGE_ROOT: /app/data/storage
+      # ===== 监控 / 心跳 =====
+      MONITORING_INTERVAL: 5
+      MONITORING_RETENTION_DAYS: 30
+      HEARTBEAT_TIMEOUT: 3
+      # 管理端版本经 build.ps1 --build-arg 烤入镜像 ENV（见 management-backend/Dockerfile.prebuilt），此处不注入
+      # ===== TrueNAS REST API（NAS 分配模块）=====
+      TRUENAS_BASE_URL: http://<truenas-host>    # 如 http://10.13.66.23
+      TRUENAS_API_KEY: <truenas-api-key>        # 须属 ACCOUNT_WRITE 角色，否则 user.create 审批时被拒
+      TRUENAS_VERIFY_TLS: false                  # 自签证书关校验（http:// 无影响，https:// 必关）
+      TRUENAS_TIMEOUT_SECONDS: 30
+      TRUENAS_RETRIES: 2
+      # TRUENAS_USER_HOME_PARENT: /mnt/tank/home  # 需新用户开 SSH 登录则取消注释（空=仅 SMB）
+      # ===== AES-GCM 密码加密密钥（base64-urlsafe 16/24/32 字节；生成 32 字节：
+      #   python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())" ）=====
+      PASSWORD_ENC_KEY: <base64-urlsafe-32byte-key>
+      # ===== NAS 分配模块行为参数 =====
+      NAS_PORTAL_BASE_URL: http://localhost      # 注册页基址回退（优先取当前请求 Origin/Referer）
+      NAS_PENDING_EXPIRE_DAYS: 7
+      NAS_EXPIRY_SCAN_INTERVAL_HOURS: 6
+      # ===== SMTP / 邮件（NAS 提交/激活/拒绝通知等；空 EMAIL_PASSWD = 不发送）=====
+      EMAIL_FROM: <smtp-from-email>
+      EMAIL_HOST: <smtp-host>                    # 如 smtp.exmail.qq.com
+      EMAIL_PORT: 465
+      EMAIL_PROTOCOL: smtps
+      EMAIL_USER: <smtp-user>
+      EMAIL_PASSWD: <smtp-auth-code>
+      EMAIL_BRAND_NAME: "合算 Nexcompute"
+    # 后端对外暴露 8080：受控端直连（ServerURL=http://<host>:8080）+ 直连 API 调试
+    ports:
+      - "8080:8080"
+    volumes:
+      - nexcompute-storage:/app/data/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      - nexcompute
+    restart: unless-stopped
+
+  # ---- 管理端前端 ----
+  frontend:
+    image: 10.13.66.18:5002/nexcompute/frontend:${VERSION:-latest}
+    container_name: nexcompute-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nexcompute
+    restart: unless-stopped
+
+volumes:
+  nexcompute-pgdata:
+  nexcompute-redis-data:
+  nexcompute-storage:
+
+networks:
+  nexcompute:
+    driver: bridge

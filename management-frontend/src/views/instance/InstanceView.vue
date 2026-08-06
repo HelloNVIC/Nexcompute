@@ -248,6 +248,7 @@ function formatBytes(bytes: number): string {
                     {{ item.machineName || '未命名' }}
                     <br />
                     <span style="font-size: 12px; color: #999">{{ item.ipAddress || '-' }}</span>
+                    <a-tag v-if="!item.storageRoot" color="orange" style="margin-left: 8px; font-size: 12px">未设存储池</a-tag>
                   </template>
                 </a-list-item-meta>
               </a-list-item>
@@ -281,6 +282,16 @@ function formatBytes(bytes: number): string {
               <a-descriptions-item label="GPU">{{ current.gpuInfo || '-' }}</a-descriptions-item>
             </a-descriptions>
           </a-card>
+
+          <!-- 未设存储池根目录警告 -->
+          <a-alert
+            v-if="!current.storageRoot"
+            type="warning"
+            show-icon
+            message="该实例未设置存储池根目录"
+            description="受控端尚未配置存储池根目录，无法在此实例上创建存储池。请在受控端 GUI 设置根目录后等待心跳同步。"
+            style="margin-bottom: 16px"
+          />
 
           <!-- 实时状态图表 -->
           <a-card title="实时状态" size="small" style="margin-bottom: 16px" v-if="current.status === 'ONLINE'">

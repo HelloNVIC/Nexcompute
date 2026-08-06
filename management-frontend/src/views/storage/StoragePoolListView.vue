@@ -362,10 +362,13 @@ function formatFileSize(bytes: number): string {
       <a-form layout="vertical">
         <a-form-item label="物理实例">
           <a-select v-model:value="createForm.instanceId" placeholder="选择物理实例">
-            <a-select-option v-for="i in instances" :key="i.id" :value="i.id">
-              {{ i.instanceNumber }} - {{ i.machineName }}
+            <a-select-option v-for="i in instances" :key="i.id" :value="i.id" :disabled="!i.storageRoot">
+              {{ i.instanceNumber }} - {{ i.machineName }}{{ i.storageRoot ? '' : '（未设存储池根目录）' }}
             </a-select-option>
           </a-select>
+          <a-typography-text v-if="instances.some((i) => !i.storageRoot)" type="secondary" style="font-size: 12px">
+            仅可在已设置存储池根目录的实例上建池；未设置的请先在受控端 GUI 设置根目录。
+          </a-typography-text>
         </a-form-item>
         <a-form-item label="项目名">
           <a-input v-model:value="createForm.projectName" placeholder="如 bert-finetune" />
@@ -384,8 +387,9 @@ function formatFileSize(bytes: number): string {
               v-for="i in instances.filter((x) => x.id !== migrateSourceInstanceId)"
               :key="i.id"
               :value="i.id"
+              :disabled="!i.storageRoot"
             >
-              {{ i.instanceNumber }} - {{ i.machineName }}
+              {{ i.instanceNumber }} - {{ i.machineName }}{{ i.storageRoot ? '' : '（未设存储池根目录）' }}
             </a-select-option>
           </a-select>
         </a-form-item>

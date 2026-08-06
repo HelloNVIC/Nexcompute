@@ -7,21 +7,27 @@
   - Agent（受控端）   ：(可选) 重新生成图标 -> 重建 .syso -> CGO 构建 nexcompute-agent.exe
 
   镜像命名约定：统一推送到私有仓库 10.13.66.18:5002/nexcompute/<service>:<version>。
-  构建开始前会询问版本号；构建完成后会询问是否推送至私有仓库。
-  docker-compose.yml 通过 image: 引用仓库镜像，版本由 VERSION 环境变量控制（默认 latest）。
+  构建开始前会询问：镜像版本号、使用哪个 docker-compose（DEV 自带 PG+Redis / PROD 连外部 DB）、受控端版本号、是否隐藏受控端控制台。
+  构建完成后会询问是否推送镜像至私有仓库。
+  compose 文件经 image: 引用仓库镜像，版本由 VERSION 环境变量控制（默认 latest）。
 
 .EXAMPLE
-  .\build.ps1                              # 构建并部署管理端 + 构建受控端
+  .\build.ps1                              # 构建并部署管理端 + 构建受控端（交互询问版本/编排/受控端版本）
   .\build.ps1 -Target Management           # 仅构建并部署管理端
   .\build.ps1 -Target Agent                # 仅构建受控端
   .\build.ps1 -Target Agent -RebuildIcon   # 改了 logo 后，先重新生成图标再构建
-  .\build.ps1 -Version v1.2.0              # 指定镜像版本号（跳过交互询问）
+  .\build.ps1 -Target Agent -HideConsole   # 构建受控端并隐藏控制台（-H windowsgui，日志写文件）
+  .\build.ps1 -Version v1.2.0              # 指定镜像版本号（跳过该步交互询问）
+  .\build.ps1 -ComposeFile docker-compose.prod.yml -AgentVersion v0.2.0  # 指定编排文件与受控端版本（跳过交互）
 #>
 param(
     [ValidateSet('All', 'Management', 'Agent')]
     [string]$Target = 'All',
     [switch]$RebuildIcon,
-    [string]$Version
+    [string]$Version,
+    [string]$ComposeFile,
+    [string]$AgentVersion,
+    [switch]$HideConsole
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,7 +47,7 @@ function Test-Cmd($n) { [bool](Get-Command $n -ErrorAction SilentlyContinue) }
 
 # ---------------- 管理端：构建 + 部署 ----------------
 function Deploy-Management {
-    param([string]$Version = 'latest')
+    param([string]$Version = 'latest', [string]$ComposeFile = 'docker-compose.yml')
 
     # 私有镜像仓库（已在 Docker Desktop daemon.json 的 insecure-registries 中配置）
     $Registry = '10.13.66.18:5002'
@@ -83,7 +89,7 @@ function Deploy-Management {
 
     # 3. 构建后端 Docker 镜像（用预编译 app.jar，Dockerfile.prebuilt）
     Write-Section '[3/5] 构建后端 Docker 镜像'
-    & docker build -t $backendImage -f 'management-backend/Dockerfile.prebuilt' 'management-backend/'
+    & docker build -t $backendImage --build-arg "MANAGEMENT_VERSION=$Version" -f 'management-backend/Dockerfile.prebuilt' 'management-backend/'
     Assert-Exit '后端镜像构建'
     Write-Ok "后端镜像构建完成：$backendImage"
 
@@ -125,13 +131,17 @@ function Deploy-Management {
 
     # 5. 启动全栈
     Write-Section '[5/5] 启动 Docker Compose'
+    if (-not (Test-Path $ComposeFile)) {
+        throw "未找到 $ComposeFile。docker-compose.prod.yml 为真实文件已 gitignore；若不存在请先 cp docker-compose.prod.example.yml docker-compose.prod.yml 并填值。"
+    }
+    Write-Info "使用编排文件：$ComposeFile"
     $env:VERSION = $Version
-    & docker compose up -d
+    & docker compose -f $ComposeFile up -d
     Assert-Exit 'docker compose up'
     Write-Ok '容器已启动，等待后端就绪...'
 
-    # 健康检查：GET http://localhost:8080/api/ping
-    $pingUrl = 'http://localhost:8080/api/ping'
+    # 健康检查：dev 后端直接暴露 8080；prod 后端未对外暴露，经前端 nginx(:80) 反代 /api
+    $pingUrl = if ($ComposeFile -eq 'docker-compose.prod.yml') { 'http://localhost/api/ping' } else { 'http://localhost:8080/api/ping' }
     $ready = $false
     Start-Sleep -Seconds 8
     for ($i = 1; $i -le 24; $i++) {
@@ -147,15 +157,47 @@ function Deploy-Management {
     if ($ready) { Write-Ok "后端就绪：$pingUrl" }
     else { Write-Warn "后端未在超时内就绪，可能仍在启动（Spring Boot 首次启动较慢），稍后重试 $pingUrl" }
     Write-Host ''
-    & docker compose ps
+    & docker compose -f $ComposeFile ps
     Write-Host ''
-    Write-Host '  前端      : http://localhost' -ForegroundColor White
-    Write-Host '  后端 API  : http://localhost:8080/api' -ForegroundColor White
+    if ($ComposeFile -eq 'docker-compose.prod.yml') {
+        Write-Host '  前端      : http://localhost' -ForegroundColor White
+        Write-Host '  后端 API  : http://localhost/api（nginx 反代）/ http://localhost:8080/api（直连）' -ForegroundColor White
+        Write-Host '  受控端    : ServerURL = http://<服务器IP>:8080（受控端连此地址）' -ForegroundColor White
+    } else {
+        Write-Host '  前端      : http://localhost' -ForegroundColor White
+        Write-Host '  后端 API  : http://localhost:8080/api' -ForegroundColor White
+        Write-Host '  受控端    : ServerURL = http://<本机IP>:8080（受控端连此地址）' -ForegroundColor White
+    }
     Write-Host '  管理员    : admin / admin123' -ForegroundColor White
+}
+
+# ---------------- 受控端版本号解析 ----------------
+# 优先 git tag（HEAD 恰指向 tag），无 tag 用 Makefile VERSION，再回退 0.1.0
+function Resolve-AgentVersion {
+    $v = $null; $source = '回退'
+    try {
+        $tag = git describe --tags --exact-match 2>$null
+        if ($LASTEXITCODE -eq 0 -and $tag) { $v = $tag.Trim(); $source = 'git tag' }
+    } catch { }
+    if (-not $v) {
+        $mk = Join-Path $root 'controlled-agent\Makefile'
+        if (Test-Path $mk) {
+            $verLine = Get-Content $mk -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match '^\s*VERSION\s*:=\s*(.+)$' } |
+                Select-Object -First 1
+            # 在本作用域重新 -match 以正确填充 $Matches（Where-Object 子作用域内的 match 不外泄）
+            if ($verLine -and $verLine -match '^\s*VERSION\s*:=\s*(.+)$') {
+                $v = $Matches[1].Trim(); $source = 'Makefile'
+            }
+        }
+    }
+    if (-not $v) { $v = '0.1.0' }
+    return [pscustomobject]@{ Version = $v; Source = $source }
 }
 
 # ---------------- 受控端：构建 ----------------
 function Build-Agent {
+    param([string]$AgentVersion, [switch]$HideConsole)
     Write-Section '受控端：构建 nexcompute-agent.exe'
     if (-not (Test-Cmd go)) { throw '未找到 go，请安装 Go 1.23+ 并加入 PATH' }
 
@@ -237,22 +279,14 @@ function Build-Agent {
         Write-Section 'CGO 构建 nexcompute-agent.exe'
         $env:CGO_ENABLED = '1'
 
-        # D1：经 ldflags 注入版本号至 internal/version.Version
-        # 优先 git tag（HEAD 恰指向 tag），无 tag 用 Makefile VERSION，再回退 0.1.0
-        $agentVersion = $null
-        try {
-            $tag = git describe --tags --exact-match 2>$null
-            if ($LASTEXITCODE -eq 0 -and $tag) { $agentVersion = $tag.Trim() }
-        } catch { }
-        if (-not $agentVersion) {
-            $verLine = Get-Content 'Makefile' -ErrorAction SilentlyContinue |
-                Where-Object { $_ -match '^\s*VERSION\s*:=\s*(.+)$' } |
-                Select-Object -First 1
-            if ($verLine -and $Matches[1]) { $agentVersion = $Matches[1].Trim() }
+        # D1：经 ldflags 注入版本号至 internal/version.Version（版本号由主流程询问 / -AgentVersion 传入）
+        $ldflags = "-X github.com/nexcompute/controlled-agent/internal/version.Version=$AgentVersion"
+        # 隐藏控制台：-H windowsgui 切 Windows GUI 子系统，运行时不弹黑窗（日志仍写文件，致命错仍弹对话框）
+        if ($HideConsole) {
+            $ldflags = "-H windowsgui $ldflags"
+            Write-Info "隐藏控制台（-H windowsgui）"
         }
-        if (-not $agentVersion) { $agentVersion = '0.1.0' }
-        $ldflags = "-X github.com/nexcompute/controlled-agent/internal/version.Version=$agentVersion"
-        Write-Info "agentVersion=$agentVersion（来源：$(if ($tag) { 'git tag' } else { 'Makefile' })）"
+        Write-Info "agentVersion=$AgentVersion"
         Write-Info "CGO_ENABLED=1 go build -ldflags `"$ldflags`" ./cmd/nexcompute-agent"
         & go build -ldflags $ldflags -o 'nexcompute-agent.exe' './cmd/nexcompute-agent'
         Assert-Exit '受控端构建'
@@ -275,19 +309,46 @@ try {
     Write-Host "目标：$Target" -ForegroundColor DarkGray
     if ($RebuildIcon) { Write-Host '选项：-RebuildIcon（重新生成受控端图标）' -ForegroundColor DarkGray }
 
-    # 管理端涉及 Docker 镜像，构建开始前确认版本号
+    # 管理端涉及 Docker 镜像，构建开始前确认版本号 + docker-compose 编排文件
     if ($Target -in 'All','Management') {
         if (-not $Version) {
             $Version = Read-Host '请输入本次构建版本号（如 v1.0.0；直接回车=latest）'
             if (-not $Version) { $Version = 'latest' }
         }
         Write-Host "版本：$Version" -ForegroundColor DarkGray
+
+        if (-not $ComposeFile) {
+            Write-Host '可用 docker-compose：'
+            Write-Host '  1) docker-compose.yml      （DEV：自带 PG+Redis，本地开发/演示）'
+            Write-Host '  2) docker-compose.prod.yml （PROD：连外部 PG/Redis）'
+            $c = Read-Host '使用哪个 docker-compose？(1/2，默认 1)'
+            if ($c -eq '2') { $ComposeFile = 'docker-compose.prod.yml' } else { $ComposeFile = 'docker-compose.yml' }
+        }
+        Write-Host "编排文件：$ComposeFile" -ForegroundColor DarkGray
+    }
+
+    # 受控端版本号（默认 git tag / Makefile 检测值，回车确认或输入新值）+ 是否隐藏控制台
+    if ($Target -in 'All','Agent') {
+        if (-not $AgentVersion) {
+            $detected = Resolve-AgentVersion
+            $av = Read-Host "请输入受控端版本号（直接回车=$($detected.Version) [$($detected.Source)]）"
+            if ($av) { $AgentVersion = $av } else { $AgentVersion = $detected.Version }
+        }
+        Write-Host "受控端版本：$AgentVersion" -ForegroundColor DarkGray
+
+        # 控制台是否隐藏（-H windowsgui；日志仍写文件，不影响排障）
+        $hideConsole = [bool]$HideConsole
+        if (-not $PSBoundParameters.ContainsKey('HideConsole')) {
+            $h = Read-Host '是否隐藏受控端控制台（运行时不显示黑窗口；日志仍写文件）? (y/N)'
+            if ($h -match '^[Yy]') { $hideConsole = $true }
+        }
+        Write-Host "隐藏控制台：$(if ($hideConsole) { '是' } else { '否' })" -ForegroundColor DarkGray
     }
 
     switch ($Target) {
-        'Management' { Deploy-Management -Version $Version }
-        'Agent'     { Build-Agent }
-        'All'       { Deploy-Management -Version $Version; Write-Host ''; Build-Agent }
+        'Management' { Deploy-Management -Version $Version -ComposeFile $ComposeFile }
+        'Agent'     { Build-Agent -AgentVersion $AgentVersion -HideConsole:$hideConsole }
+        'All'       { Deploy-Management -Version $Version -ComposeFile $ComposeFile; Write-Host ''; Build-Agent -AgentVersion $AgentVersion -HideConsole:$hideConsole }
     }
 
     Write-Host ''

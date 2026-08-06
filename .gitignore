@@ -6,6 +6,7 @@
 *.jar
 !**/gradle/wrapper/gradle-wrapper.jar
 *.class
+.tmp_*
 
 # ===== Frontend =====
 **/node_modules/
@@ -14,6 +15,9 @@
 
 # ===== Controlled agent: binaries & runtime config (contains agent token) =====
 *.exe
+*.exe.bak
+*.exe.old
+*.exe~
 *.dll
 controlled-agent/nexcompute-agent.json
 
@@ -33,7 +37,11 @@ controlled-agent/nexcompute-agent.json
 Thumbs.db
 .DS_Store
 
-# ===== Secrets / env（.env 真实密钥不入库，.env.example 入库作模板）=====
+# ===== Secrets（真实密钥不入库）=====
+# docker-compose.yml：DEV 全栈内联真实密钥，不入库；模板见 docker-compose.example.yml
+# docker-compose.prod.yml：生产内联真实密钥（外部 DB/Redis 凭据等），不入库；模板见 docker-compose.prod.example.yml
+# .env：本地 bootRun 可选 source 注入（已不再被 Spring 读取），亦不入库
 .env
 .env.*
-!.env.example
+docker-compose.yml
+docker-compose.prod.yml
