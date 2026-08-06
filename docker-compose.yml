@@ -46,6 +46,12 @@ services:
   backend:
     image: 10.13.66.18:5002/nexcompute/backend:${VERSION:-latest}
     container_name: nexcompute-backend
+    # nas-allocation D4：根 .env 作单一真实源（TRUENAS_* / PASSWORD_ENC_KEY / NAS_*）
+    # 与下方 environment: 并存，environment: 覆盖同名键（容器内 DB_URL 仍指向 postgres 服务）
+    # required:false 保留无 .env 时的回退（仅 environment: 亦能起，NAS 模块降级）
+    env_file:
+      - path: .env
+        required: false
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/nexcompute
       DB_USERNAME: nexcompute

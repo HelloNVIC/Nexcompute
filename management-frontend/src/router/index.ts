@@ -27,6 +27,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '管理员注册' },
   },
   {
+    path: '/nas-register',
+    name: 'nas-register',
+    component: () => import('@/views/auth/NasRegisterView.vue'),
+    meta: { public: true, title: 'NAS 用户注册' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/BasicLayout.vue'),
     redirect: '/dashboard',
@@ -111,6 +117,13 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-admin-invite',
         component: () => import('@/views/admin/AdminInviteView.vue'),
         meta: { title: '管理员注册邀请', roles: ['ADMIN'] },
+      },
+      // nas-allocation：管理员后台「NAS分配」模块（邀请管理 + 审批 + 已开通用户）
+      {
+        path: 'admin/nas-allocation',
+        name: 'admin-nas-allocation',
+        component: () => import('@/views/admin/NasAllocationView.vue'),
+        meta: { title: 'NAS分配', roles: ['ADMIN'] },
       },
       // platform-refinements 11.5：受控端管理密码统一设置入口
       {

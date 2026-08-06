@@ -1,0 +1,76 @@
+# Nexcompute 管理端 生产部署编排（精简版：不含 PostgreSQL 容器，连接外部数据库）
+#
+# 用法：
+#   1. 复制 .env.example -> .env，填入 TrueNAS / AES 密钥 / SMTP 等（见 .env.example 注释）
+#   2. 编辑本文件：把 <PG_HOST> / <服务器IP> / <前端端口> 等占位换成实际值
+#   3. docker compose -f docker-compose.prod.yml up -d
+#
+# 镜像从私有仓库 10.13.66.18:5002/nexcompute 拉取（需先在 Docker 配 insecure-registries，见 DEPLOY.md）。
+
+services:
+  # ---- 缓存 ----
+  # 无外部 Redis 时保留本容器；若有外部 Redis，删掉本服务并把 backend.REDIS_HOST 改为外部地址
+  redis:
+    image: redis:7-alpine
+    container_name: nexcompute-redis
+    volumes:
+      - nexcompute-redis-data:/data
+    restart: unless-stopped
+    networks:
+      - nexcompute
+
+  # ---- 管理端后端 ----
+  backend:
+    image: 10.13.66.18:5002/nexcompute/backend:${VERSION:-latest}
+    container_name: nexcompute-backend
+    # 读取同目录 .env（TrueNAS / AES / SMTP / NAS_* 等）；environment 中的同名键覆盖 .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # ===== 数据库（连接外部 PostgreSQL，不再起 postgres 容器）=====
+      DB_URL: "jdbc:postgresql://<PG_HOST>:<PG_PORT>/nexcompute"
+      DB_USERNAME: "<PG_USER>"
+      DB_PASSWORD: "<PG_PASSWORD>"
+      # ===== Redis（默认用上面的 redis 容器；外部 Redis 改这里）=====
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # ===== JWT 密钥（务必改成至少 64 字符的强随机串）=====
+      JWT_SECRET: "<改成强随机密钥-至少64字符>"
+      # ===== CORS 允许的前端访问地址（多个逗号分隔；即用户浏览器访问前端的地址）=====
+      CORS_ORIGINS: "http://<服务器IP>:<前端端口>"
+      # ===== 其他 =====
+      STORAGE_ROOT: /app/data/storage
+      MONITORING_INTERVAL: 5
+      MONITORING_RETENTION_DAYS: 30
+      HEARTBEAT_TIMEOUT: 3
+    # 后端通常无需对外暴露（前端经 nginx 反代 /api 访问）；
+    # 如需直连后端 API（如调试、受控端直连），取消下面注释并改左侧端口
+    # ports:
+    #   - "8080:8080"
+    volumes:
+      - nexcompute-storage:/app/data/storage
+    restart: unless-stopped
+    networks:
+      - nexcompute
+
+  # ---- 管理端前端（nginx 静态服务 + 反代 /api 到 backend 容器）----
+  frontend:
+    image: 10.13.66.18:5002/nexcompute/frontend:${VERSION:-latest}
+    container_name: nexcompute-frontend
+    ports:
+      # 左侧 = 宿主机端口（用户访问 http://<服务器IP>:<左侧端口>）；右侧 80 固定（容器内 nginx）
+      - "<前端端口>:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - nexcompute
+
+volumes:
+  nexcompute-storage:
+  nexcompute-redis-data:
+
+networks:
+  nexcompute:
+    driver: bridge

@@ -42,7 +42,9 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/login", "/auth/register", "/auth/mentor-register", "/auth/admin-register").permitAll()
+                .requestMatchers("/auth/login", "/auth/register", "/auth/mentor-register", "/auth/admin-register",
+                    // nas-allocation D5：公开 NAS 注册端点免鉴权（凭邀请令牌）
+                    "/nas-allocation/register/**").permitAll()
                 .requestMatchers("/ping", "/actuator/**").permitAll()
                 // 受控端心跳与 WS 端点使用 token 认证（在 controller 层校验）
                 .requestMatchers("/agent/**").permitAll()

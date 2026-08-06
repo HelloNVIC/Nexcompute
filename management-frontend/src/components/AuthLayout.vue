@@ -15,8 +15,9 @@ defineProps<{ title?: string }>()
           <li>容器化计算环境一键部署</li>
           <li>镜像 / 存储池 / 课题组协同管理</li>
           <li>关键事件邮件提醒，离线不失联</li>
+          <li>NAS集成管理，全流程覆盖</li>
         </ul>
-        <div class="brand-footer">© Nexcompute 管理平台</div>
+        <div class="brand-footer">© Lab404金融大模型实验室</div>
       </div>
     </div>
     <!-- 右：表单区 -->

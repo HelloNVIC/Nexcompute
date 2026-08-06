@@ -173,7 +173,121 @@ public class EmailService {
     }
 
     /**
-     * 公告未读名单邮件提醒（管理员手动触发，非事件触发键）。
+     * NAS 账号开通通知(nas-allocation):审批/重申上游成功后异步发送至 NAS 账号邮箱,
+     * 引导用户前往 TrueNAS 登录。不依赖 EmailTrigger/平台 User(NAS 用户无平台账号)。
+     * 失败仅记 email_log,不影响审批事务。trigger_key=NAS_ACCOUNT_ACTIVATED。
+     */
+    @Async("emailTaskExecutor")
+    public void sendNasActivated(String toEmail, String username, String fullName, String truenasLoginUrl) {
+        String brandName = readBrandName();
+        String signature = readSignature();
+        String safeName = safeName(fullName);
+        String loginUrl = safeStr(truenasLoginUrl);
+        String subject = "你的 NAS 账号已开通 - " + brandName;
+        String plain = brandName + " - NAS 账号已开通\n\n" + safeName + " 你好:\n\n"
+                + "你的 TrueNAS 账号 " + username + " 已由管理员开通,现在可以登录使用。\n"
+                + "登录地址:" + loginUrl + "\n\n" + signature;
+        String html = "<!DOCTYPE html><html><body style=\"font-family:-apple-system,'Segoe UI',sans-serif;color:#333\">"
+                + "<img src=\"cid:logo\" alt=\"logo\" style=\"height:40px;margin-bottom:16px\"/>"
+                + "<h2 style=\"margin:0 0 12px\">NAS 账号已开通</h2>"
+                + "<p>" + safeName + " 你好:</p>"
+                + "<p>你的 TrueNAS 账号 <b>" + username + "</b> 已由管理员开通,现在可以登录使用。</p>"
+                + "<p>请前往以下地址登录:</p>"
+                + "<p><a href=\"" + loginUrl + "\" style=\"color:#1677ff;font-size:16px\">" + loginUrl + "</a></p>"
+                + "<hr style=\"border:none;border-top:1px solid #eee;margin:20px 0\"/>"
+                + "<p style=\"color:#888;font-size:12px;white-space:pre-line\">" + signature + "</p>"
+                + "</body></html>";
+        sendNasMail("NAS_ACCOUNT_ACTIVATED", toEmail, subject, html, plain, "NAS 激活通知", username);
+    }
+
+    /**
+     * NAS 注册申请提交通知:用户提交申请后异步发送至其邮箱,告知已收到、待审批。
+     * trigger_key=NAS_REGISTRATION_SUBMITTED。
+     */
+    @Async("emailTaskExecutor")
+    public void sendNasSubmitted(String toEmail, String username, String fullName) {
+        String brandName = readBrandName();
+        String signature = readSignature();
+        String safeName = safeName(fullName);
+        String subject = "NAS 注册申请已提交 - " + brandName;
+        String plain = brandName + " - NAS 注册申请已提交\n\n" + safeName + " 你好:\n\n"
+                + "你的 TrueNAS 账号 " + username + " 的注册申请已提交,管理员审批通过后将为你开通并再次通知你。\n\n"
+                + signature;
+        String html = "<!DOCTYPE html><html><body style=\"font-family:-apple-system,'Segoe UI',sans-serif;color:#333\">"
+                + "<img src=\"cid:logo\" alt=\"logo\" style=\"height:40px;margin-bottom:16px\"/>"
+                + "<h2 style=\"margin:0 0 12px\">注册申请已提交</h2>"
+                + "<p>" + safeName + " 你好:</p>"
+                + "<p>你的 TrueNAS 账号 <b>" + username + "</b> 的注册申请已提交,管理员审批通过后将为你开通并再次通知你。</p>"
+                + "<hr style=\"border:none;border-top:1px solid #eee;margin:20px 0\"/>"
+                + "<p style=\"color:#888;font-size:12px;white-space:pre-line\">" + signature + "</p>"
+                + "</body></html>";
+        sendNasMail("NAS_REGISTRATION_SUBMITTED", toEmail, subject, html, plain, "NAS 提交确认", username);
+    }
+
+    /**
+     * NAS 注册申请拒绝通知:管理员拒绝后异步发送至其邮箱,告知未通过及原因。
+     * trigger_key=NAS_REGISTRATION_REJECTED。
+     */
+    @Async("emailTaskExecutor")
+    public void sendNasRejected(String toEmail, String username, String fullName, String reason) {
+        String brandName = readBrandName();
+        String signature = readSignature();
+        String safeName = safeName(fullName);
+        String reasonText = (reason == null || reason.isBlank()) ? "（未提供具体原因）" : reason;
+        String subject = "NAS 注册申请未通过 - " + brandName;
+        String plain = brandName + " - NAS 注册申请未通过\n\n" + safeName + " 你好:\n\n"
+                + "很抱歉,你的 TrueNAS 账号 " + username + " 的注册申请未通过审核。\n"
+                + "原因:" + reasonText + "\n\n" + signature;
+        String html = "<!DOCTYPE html><html><body style=\"font-family:-apple-system,'Segoe UI',sans-serif;color:#333\">"
+                + "<img src=\"cid:logo\" alt=\"logo\" style=\"height:40px;margin-bottom:16px\"/>"
+                + "<h2 style=\"margin:0 0 12px\">注册申请未通过</h2>"
+                + "<p>" + safeName + " 你好:</p>"
+                + "<p>很抱歉,你的 TrueNAS 账号 <b>" + username + "</b> 的注册申请未通过审核。</p>"
+                + "<p>原因:" + reasonText + "</p>"
+                + "<hr style=\"border:none;border-top:1px solid #eee;margin:20px 0\"/>"
+                + "<p style=\"color:#888;font-size:12px;white-space:pre-line\">" + signature + "</p>"
+                + "</body></html>";
+        sendNasMail("NAS_REGISTRATION_REJECTED", toEmail, subject, html, plain, "NAS 拒绝通知", username);
+    }
+
+    /** NAS 邮件发送公共 helper:异步线程内同步发送 + 写 email_log（失败仅记不影响业务） */
+    private void sendNasMail(String triggerKey, String toEmail, String subject, String html, String plain,
+                             String logTag, String username) {
+        if (toEmail == null || toEmail.isBlank()) {
+            log.debug("[Email] {} 跳过:无邮箱 username={}", logTag, username);
+            return;
+        }
+        EmailLog logEntry = EmailLog.builder()
+                .triggerKey(triggerKey)
+                .recipientEmail(toEmail)
+                .subject(subject)
+                .build();
+        try {
+            sendMime(toEmail, subject, html, plain);
+            logEntry.setStatus("SUCCESS");
+            log.info("[Email] {} 已发送: to={} username={}", logTag, toEmail, username);
+        } catch (Exception e) {
+            logEntry.setStatus("FAILED");
+            logEntry.setError(truncate(e.getMessage(), 1000));
+            log.warn("[Email] {} 发送失败(不影响业务): to={} err={}", logTag, toEmail, e.getMessage());
+        } finally {
+            try {
+                emailLogRepository.save(logEntry);
+            } catch (Exception ex) {
+                log.error("[Email] {} 写日志失败: {}", logTag, ex.getMessage());
+            }
+        }
+    }
+
+    private static String safeName(String fullName) {
+        return (fullName == null || fullName.isBlank()) ? "用户" : fullName;
+    }
+
+    private static String safeStr(String s) {
+        return (s == null || s.isBlank()) ? "" : s;
+    }
+
+    /** 公告未读名单邮件提醒（管理员手动触发，非事件触发键）。
      * 绕过用户偏好与全局开关（管理员广播），逐个异步发送并写 email_log（trigger_key=ANNOUNCEMENT_REMINDER）。
      * 返回成功发送数（失败仅记日志不抛）。
      */

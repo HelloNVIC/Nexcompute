@@ -32,3 +32,8 @@ controlled-agent/nexcompute-agent.json
 # ===== OS =====
 Thumbs.db
 .DS_Store
+
+# ===== Secrets / env（.env 真实密钥不入库，.env.example 入库作模板）=====
+.env
+.env.*
+!.env.example

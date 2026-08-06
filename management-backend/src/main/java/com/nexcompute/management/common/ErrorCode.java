@@ -64,7 +64,21 @@ public enum ErrorCode {
 
     // 公告/通知 10xxx
     ANNOUNCEMENT_NOT_FOUND(10001, "公告不存在"),
-    NOTIFICATION_NOT_FOUND(10002, "通知不存在");
+    NOTIFICATION_NOT_FOUND(10002, "通知不存在"),
+
+    // NAS 分配 11xxx
+    NAS_INVITATION_NOT_FOUND(11001, "邀请不存在"),
+    NAS_INVITATION_INVALID(11002, "邀请令牌无效"),
+    NAS_INVITATION_EXPIRED(11003, "邀请已过期"),
+    NAS_INVITATION_REVOKED(11004, "邀请已失效"),
+    NAS_INVITATION_EXHAUSTED(11005, "邀请名额已用完"),
+    NAS_REGISTRATION_NOT_FOUND(11006, "注册申请不存在"),
+    NAS_REGISTRATION_INVALID_STATE(11007, "申请状态不允许此操作"),
+    NAS_USERNAME_TAKEN(11008, "用户名已被占用"),
+    NAS_NO_PASSWORD(11009, "缺少暂存密码"),
+    NAS_PASSWORD_DECRYPT_FAILED(11010, "密码解密失败"),
+    NAS_PROVISION_FAILED(11011, "TrueNAS 开通失败"),
+    NAS_CONFIG_ERROR(11012, "NAS 模块配置缺失");
 
     private final int code;
     private final String message;

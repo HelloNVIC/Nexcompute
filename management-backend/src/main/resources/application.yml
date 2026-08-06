@@ -6,6 +6,12 @@ server:
 spring:
   application:
     name: nexcompute-management
+  # nas-allocation D4：根 .env 作单一真实源，Spring 原生导入（properties 解析，引号剥离）
+  # 两条路径覆盖：bootRun 从 management-backend/ 跑（../.env）与 从根跑/打包后（.env）；optional 保证无 .env 回退默认
+  config:
+    import:
+      - "optional:file:.env[.properties]"
+      - "optional:file:../.env[.properties]"
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/nexcompute}
     username: ${DB_USERNAME:nexcompute}
@@ -45,6 +51,20 @@ spring:
 nexcompute:
   management:
     version: ${MANAGEMENT_VERSION:0.0.1-SNAPSHOT}  # platform-env-ota-realtime：受控端"关于"展示的管理端版本
+  # nas-allocation D4：NAS 分配模块配置（TrueNAS 连接 / AES 密钥 / 过期策略）
+  # .env 注入 TRUENAS_* / PASSWORD_ENC_KEY / NAS_*；无 .env 时回退默认值（verifyTls=false 适配自签 http）
+  nas:
+    truenas:
+      base-url: ${TRUENAS_BASE_URL:http://10.13.66.23}        # TrueNAS REST 基址（/api/v2.0）
+      api-key: ${TRUENAS_API_KEY:}                              # API key（须 ACCOUNT_WRITE 角色）
+      verify-tls: ${TRUENAS_VERIFY_TLS:false}                  # 自签证书关校验
+      timeout-seconds: ${TRUENAS_TIMEOUT_SECONDS:30}            # 单请求超时
+      retries: ${TRUENAS_RETRIES:2}                             # 连接错误重试次数
+      user-home-parent: ${TRUENAS_USER_HOME_PARENT:}            # 新用户 home 父目录（空=仅 SMB，设置=开 SSH）
+    password-enc-key: ${PASSWORD_ENC_KEY:}                     # AES-GCM 密钥（base64-urlsafe，16/24/32B）
+    pending-expire-days: ${NAS_PENDING_EXPIRE_DAYS:7}           # PENDING 超期天数
+    expiry-scan-interval-hours: ${NAS_EXPIRY_SCAN_INTERVAL_HOURS:6}  # PENDING 超期扫描间隔（小时）
+    portal-base-url: ${NAS_PORTAL_BASE_URL:http://localhost:5173}    # 注册页基址回退（优先用当前请求 Origin/Referer，仅无请求上下文时用此）
   jwt:
     secret: ${JWT_SECRET:dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LWZvci1qd3QtdG9rZW4tc2lnbmluZy1wbGVhc2UtY2hhbmdlLWl0}
     expiration-ms: 86400000  # 24h
