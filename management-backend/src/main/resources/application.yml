@@ -61,6 +61,18 @@ nexcompute:
     pending-expire-days: ${NAS_PENDING_EXPIRE_DAYS:7}           # PENDING 超期天数
     expiry-scan-interval-hours: ${NAS_EXPIRY_SCAN_INTERVAL_HOURS:6}  # PENDING 超期扫描间隔（小时）
     portal-base-url: ${NAS_PORTAL_BASE_URL:http://localhost:5173}    # 注册页基址回退（优先用当前请求 Origin/Referer，仅无请求上下文时用此）
+  # newapi-user-allocation D4：NewAPI 用户分配模块配置（NewAPI 连接 / 过期策略）
+  # docker-compose environment: 注入 NEWAPI_*；AES 密钥复用 nas.password-enc-key（PASSWORD_ENC_KEY，NAS/NewAPI 共用）
+  # 无注入时回退默认值；NewAPI 为 http 无需 TLS 配置
+  newapi:
+    base-url: ${NEWAPI_BASE_URL:http://10.13.66.18:3001}            # NewAPI REST 基址（/api 前缀）
+    access-token: ${NEWAPI_ACCESS_TOKEN:}                           # 系统访问令牌（Authorization: Bearer）；轮换后须更新并重启
+    api-user: ${NEWAPI_API_USER:}                                   # 调用方用户 id（New-Api-User 头，须属管理员角色）
+    timeout-seconds: ${NEWAPI_TIMEOUT_SECONDS:30}                   # 单请求超时
+    retries: ${NEWAPI_RETRIES:2}                                    # 连接错误重试次数
+    pending-expire-days: ${NEWAPI_PENDING_EXPIRE_DAYS:7}             # PENDING 超期天数
+    expiry-scan-interval-hours: ${NEWAPI_EXPIRY_SCAN_INTERVAL_HOURS:6}  # PENDING 超期扫描间隔（小时）
+    portal-base-url: ${NEWAPI_PORTAL_BASE_URL:http://localhost:5173}    # 注册页基址回退（优先用当前请求 Origin/Referer，仅无请求上下文时用此）
   jwt:
     secret: ${JWT_SECRET:dGhpcy1pcy1hLXZlcnktbG9uZy1zZWNyZXQta2V5LWZvci1qd3QtdG9rZW4tc2lnbmluZy1wbGVhc2UtY2hhbmdlLWl0}
     expiration-ms: 86400000  # 24h

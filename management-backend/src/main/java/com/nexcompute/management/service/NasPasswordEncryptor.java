@@ -21,6 +21,9 @@ import java.util.Base64;
  * Java GCM {@code doFinal} 默认 tag 在尾部，与 Python {@code AESGCM.encrypt} 输出一致，密文互通。
  * <p>密钥 base64-urlsafe 解码后须 16/24/32 字节。无 .env 时密钥为空，应用仍可启动（D10/D4 回退），
  * encrypt/decrypt 抛 {@link NasCryptoException}（到注册提交/批准才暴露）。
+ * <p><b>NAS / NewAPI 共用同一密钥与格式</b>：newapi-user-allocation D7 直接复用本类
+ * （NewApiRegistrationService 注入本 Bean），密钥同为 {@code PASSWORD_ENC_KEY}，密文格式一致，
+ * 避免 AES 密钥散落多处。NewAPI 注册申请暂存密码与 NAS 走同一加解密路径。
  */
 @Slf4j
 @Component

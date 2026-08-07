@@ -33,6 +33,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: 'NAS 用户注册' },
   },
   {
+    path: '/newapi-register',
+    name: 'newapi-register',
+    component: () => import('@/views/auth/NewApiRegisterView.vue'),
+    meta: { public: true, title: 'Token 用户注册' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/BasicLayout.vue'),
     redirect: '/dashboard',
@@ -124,6 +130,13 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-nas-allocation',
         component: () => import('@/views/admin/NasAllocationView.vue'),
         meta: { title: 'NAS分配', roles: ['ADMIN'] },
+      },
+      // newapi-user-allocation：管理员后台「Token分配」模块（NewAPI 用户邀请门控注册 + 审批开通）
+      {
+        path: 'admin/newapi-user-allocation',
+        name: 'admin-newapi-user-allocation',
+        component: () => import('@/views/admin/NewApiUserAllocationView.vue'),
+        meta: { title: 'Token分配', roles: ['ADMIN'] },
       },
       // platform-refinements 11.5：受控端管理密码统一设置入口
       {

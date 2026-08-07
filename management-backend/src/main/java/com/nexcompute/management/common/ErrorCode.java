@@ -78,7 +78,21 @@ public enum ErrorCode {
     NAS_NO_PASSWORD(11009, "缺少暂存密码"),
     NAS_PASSWORD_DECRYPT_FAILED(11010, "密码解密失败"),
     NAS_PROVISION_FAILED(11011, "TrueNAS 开通失败"),
-    NAS_CONFIG_ERROR(11012, "NAS 模块配置缺失");
+    NAS_CONFIG_ERROR(11012, "NAS 模块配置缺失"),
+
+    // NewAPI 分配 12xxx（newapi-user-allocation，镜像 NAS 11xxx）
+    NEWAPI_INVITATION_NOT_FOUND(12001, "邀请不存在"),
+    NEWAPI_INVITATION_INVALID(12002, "邀请令牌无效"),
+    NEWAPI_INVITATION_EXPIRED(12003, "邀请已过期"),
+    NEWAPI_INVITATION_REVOKED(12004, "邀请已失效"),
+    NEWAPI_INVITATION_EXHAUSTED(12005, "邀请名额已用完"),
+    NEWAPI_REGISTRATION_NOT_FOUND(12006, "注册申请不存在"),
+    NEWAPI_REGISTRATION_INVALID_STATE(12007, "申请状态不允许此操作"),
+    NEWAPI_USERNAME_TAKEN(12008, "用户名已被占用"),
+    NEWAPI_NO_PASSWORD(12009, "缺少暂存密码"),
+    NEWAPI_PASSWORD_DECRYPT_FAILED(12010, "密码解密失败"),
+    NEWAPI_PROVISION_FAILED(12011, "NewAPI 开通失败"),
+    NEWAPI_CONFIG_ERROR(12012, "NewAPI 模块配置缺失");
 
     private final int code;
     private final String message;

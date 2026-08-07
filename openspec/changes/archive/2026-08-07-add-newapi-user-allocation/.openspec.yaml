@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-08-06
+goal: 把 NewAPI 用户账号开通从手动 NewUI 操作改为邀请门控 + 审批 + 自动建账号流程，1:1 复刻 nas-allocation
+  的邀请/注册/审批/5态机模式（TrueNasClient->NewApiClient，40/41/42 角色->group 分组），并入
+  Nexcompute SpringBoot+Vue 栈

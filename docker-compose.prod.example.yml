@@ -58,6 +58,16 @@ services:
       NAS_PORTAL_BASE_URL: "http://<服务器IP>"
       NAS_PENDING_EXPIRE_DAYS: 7
       NAS_EXPIRY_SCAN_INTERVAL_HOURS: 6
+      # ===== NewAPI REST API（NewAPI 用户分配模块；LLM 网关）=====
+      NEWAPI_BASE_URL: "http://<newapi-host>"
+      NEWAPI_ACCESS_TOKEN: "<newapi-access-token>"
+      NEWAPI_API_USER: "<newapi-api-user-id>"
+      NEWAPI_TIMEOUT_SECONDS: 30
+      NEWAPI_RETRIES: 2
+      # ===== NewAPI 分配模块行为参数（AES 密钥复用上方 PASSWORD_ENC_KEY，NAS/NewAPI 共用）=====
+      NEWAPI_PORTAL_BASE_URL: "http://<服务器IP>"
+      NEWAPI_PENDING_EXPIRE_DAYS: 7
+      NEWAPI_EXPIRY_SCAN_INTERVAL_HOURS: 6
       # ===== SMTP / 邮件（NAS 提交/激活/拒绝通知等；空 EMAIL_PASSWD = 不发送）=====
       EMAIL_FROM: "<smtp-from-email>"
       EMAIL_HOST: "<smtp-host>"

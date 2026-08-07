@@ -15,6 +15,7 @@ import {
   UserOutlined,
   UserAddOutlined,
   CloudServerOutlined,
+  ThunderboltOutlined,
   LogoutOutlined,
 } from '@ant-design/icons-vue'
 import { useAuthStore, type UserRole } from '@/stores/auth'
@@ -56,6 +57,8 @@ const menus = computed<MenuItem[]>(() => {
     { key: '/admin/admin-invite', label: '管理员注册邀请', icon: UserAddOutlined, roles: ['ADMIN'] },
     // nas-allocation：管理员后台「NAS分配」（TrueNAS 用户邀请门控注册 + 审批开通）
     { key: '/admin/nas-allocation', label: 'NAS分配', icon: CloudServerOutlined, roles: ['ADMIN'] },
+    // newapi-user-allocation：管理员后台「Token分配」（NewAPI 用户邀请门控注册 + 审批开通）
+    { key: '/admin/newapi-user-allocation', label: 'Token分配', icon: ThunderboltOutlined, roles: ['ADMIN'] },
     // platform-refinements 11.5：受控端管理密码统一设置入口
     { key: '/admin/local-admin-password', label: '受控端管理密码', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
     { key: '/admin/permissions', label: '权限矩阵配置', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },

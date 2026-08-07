@@ -69,6 +69,7 @@ public class NasRegistrationService {
     private final TrueNasClient trueNasClient;
     private final NasProperties nasProperties;
     private final EmailService emailService;
+    private final NasProvisionFailureRecorder failureRecorder;
 
     // ==================== 公开注册（7.x） ====================
 
@@ -227,10 +228,10 @@ public class NasRegistrationService {
             truenasUserId = ids[0];
             truenasUid = ids[1];
         } catch (TrueNasApiError | TrueNasConnectionError e) {
-            reg.setStatus(NasRegistrationStatus.FAILED);
-            reg.setProvisionError(e.getClass().getSimpleName() + ": " + e.getMessage());
-            // password_enc 保留供重试
-            registrationRepository.save(reg);
+            // 失败状态经 REQUIRES_NEW 独立事务落盘（置 FAILED + 写 provision_error，保留 password_enc），
+            // 避免外层 @Transactional 回滚丢失（spec：开通失败保留密码可重试）
+            String error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            failureRecorder.recordFailure(reg.getId(), NasRegistrationStatus.FAILED, error);
             log.warn("[NAS-Reg] 批准开通失败: id={}, error={}", id, e.getMessage());
             throw new BusinessException(ErrorCode.NAS_PROVISION_FAILED, "TrueNAS 开通失败：" + e.getMessage());
         }
@@ -314,8 +315,9 @@ public class NasRegistrationService {
             truenasUserId = ids[0];
             truenasUid = ids[1];
         } catch (TrueNasApiError | TrueNasConnectionError e) {
-            reg.setProvisionError(e.getClass().getSimpleName() + ": " + e.getMessage());
-            registrationRepository.save(reg);
+            // 失败状态经 REQUIRES_NEW 独立事务落盘（保持 NOT_FOUND + 写 provision_error，保留 password_enc）
+            String error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            failureRecorder.recordFailure(reg.getId(), NasRegistrationStatus.NOT_FOUND, error);
             log.warn("[NAS-Reg] 重申上游失败: id={}, error={}", id, e.getMessage());
             throw new BusinessException(ErrorCode.NAS_PROVISION_FAILED, "TrueNAS 重新注册失败：" + e.getMessage());
         }
