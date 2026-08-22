@@ -36,8 +36,8 @@ type Config struct {
 	AgentToken string `json:"agentToken"`
 
 	// 存储池根目录（设后不可改，修改需本地管理员密码）
-	StorageRoot string `json:"storageRoot"`
-	StorageRootLocked bool `json:"storageRootLocked"`
+	StorageRoot       string `json:"storageRoot"`
+	StorageRootLocked bool   `json:"storageRootLocked"`
 
 	// 本地管理员密码（platform-refinements 11.3：全局共享、明文保存；管理端统一下发）
 	LocalAdminPassword string `json:"localAdminPassword"`
@@ -51,11 +51,11 @@ type Config struct {
 
 var (
 	defaultCfg = Config{
-		ServerURL:              "http://localhost:8080",
-		HeartbeatInterval:      1, // platform-refinements #4：心跳 1 秒一次
-		WSReconnectBaseMs:      2000,
-		WSReconnectMaxMs:       60000,
-		ConnectMode:            "direct",
+		ServerURL:               "http://10.13.66.18:8080",
+		HeartbeatInterval:       1, // platform-refinements #4：心跳 1 秒一次
+		WSReconnectBaseMs:       2000,
+		WSReconnectMaxMs:        60000,
+		ConnectMode:             "direct",
 		PublicImageSyncInterval: 3600,
 	}
 	cfg     *Config

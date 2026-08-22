@@ -111,6 +111,14 @@ nexcompute:
         - Nexcompute 管理平台
         （此邮件由系统自动发送，请勿直接回复）
       logo-filename: ${EMAIL_LOGO_FILENAME:}                # Logo 文件名（空=classpath 默认 PNG）
+  # password-management-and-id-validation D10：忘记密码验证码配置（有效期/限频/清理）。
+  # docker-compose environment: 注入 PASSWORD_RESET_*；无注入时回退默认值。
+  password-reset:
+    code-expire-minutes: ${PASSWORD_RESET_CODE_EXPIRE_MINUTES:10}        # 验证码有效期（分钟）
+    send-cooldown-seconds: ${PASSWORD_RESET_SEND_COOLDOWN_SECONDS:60}   # 同一用户名发送限频冷却（秒）
+    max-attempts: ${PASSWORD_RESET_MAX_ATTEMPTS:5}                       # 每码校验失败次数上限（达上限作废）
+    cleanup-interval-hours: ${PASSWORD_RESET_CLEANUP_INTERVAL_HOURS:6}  # 过期/已消费码清理扫描间隔（小时）
+    cleanup-retain-days: ${PASSWORD_RESET_CLEANUP_RETAIN_DAYS:7}       # 清理保留天数（删 expires_at < now - retain-days）
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
 

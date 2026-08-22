@@ -272,6 +272,9 @@ function formatBytes(bytes: number): string {
               </a-descriptions-item>
               <a-descriptions-item label="机器名">{{ current.machineName || '-' }}</a-descriptions-item>
               <a-descriptions-item label="IP">{{ current.ipAddress || '-' }}</a-descriptions-item>
+              <a-descriptions-item label="机器码" :span="2">
+                <span style="font-family: 'SFMono-Regular', Consolas, monospace; word-break: break-all">{{ current.machineCode || '-' }}</span>
+              </a-descriptions-item>
               <a-descriptions-item label="连接模式">
                 <a-tag>{{ current.connectMode === 'direct' ? '直连' : '穿透' }}</a-tag>
               </a-descriptions-item>

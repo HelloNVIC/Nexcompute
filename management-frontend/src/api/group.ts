@@ -5,6 +5,10 @@ export interface ResearchGroup {
   name: string
   description?: string
   mentorId?: number
+  /** 导师姓名（listAllWithDetails 解析 mentor_id -> realName，仅课题组管理表用） */
+  mentorName?: string
+  /** 已分配物理实例数量（按 instance_id 去重，仅课题组管理表用） */
+  allocatedInstanceCount?: number
 }
 
 export interface UserInfoDto {

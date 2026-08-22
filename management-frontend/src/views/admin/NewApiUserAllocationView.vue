@@ -10,6 +10,7 @@ import {
   type NewApiRegistrationDetail,
   type NewApiRegistrationStatus,
 } from '@/api/newApiUserAllocation'
+import { copyToClipboard } from '@/utils/clipboard'
 
 type ActionTarget = NewApiRegistrationListItem
 
@@ -149,9 +150,10 @@ async function doCreate(): Promise<void> {
   }
 }
 
-function copyRegisterUrl(url: string): void {
-  navigator.clipboard.writeText(url)
-  message.success('注册链接已复制')
+async function copyRegisterUrl(url: string): Promise<void> {
+  const ok = await copyToClipboard(url)
+  if (ok) message.success('注册链接已复制')
+  else message.error('复制失败，请手动选中链接复制')
 }
 
 function confirmRevoke(inv: NewApiInvitation): void {

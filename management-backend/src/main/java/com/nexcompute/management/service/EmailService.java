@@ -328,6 +328,37 @@ public class EmailService {
         sendNasMail("NEWAPI_REGISTRATION_REJECTED", toEmail, subject, html, plain, "NewAPI 拒绝通知", username);
     }
 
+    /**
+     * 忘记密码验证码邮件（password-management-and-id-validation D3）：异步发送至账号绑定邮箱,
+     * 引导用户输入验证码重置密码。不依赖 EmailTrigger（系统安全邮件,非用户可关通知）。
+     * 失败仅记 email_log,不影响调用事务。trigger_key=PASSWORD_RESET_CODE。
+     * 正文含用户名（便于用户确认是哪个账号）与验证码。
+     */
+    @Async("emailTaskExecutor")
+    public void sendPasswordResetCode(String toEmail, String username, String fullName, String code, int expireMinutes) {
+        String brandName = readBrandName();
+        String signature = readSignature();
+        String safeName = safeName(fullName);
+        String subject = "你的忘记密码验证码 - " + brandName;
+        String plain = brandName + " - 忘记密码验证码\n\n" + safeName + " 你好:\n\n"
+                + "你正在为账号 " + username + " 重置登录密码。\n"
+                + "验证码:" + code + "\n"
+                + "验证码 " + expireMinutes + " 分钟内有效,请尽快使用。如非本人操作请忽略本邮件。\n\n" + signature;
+        String html = "<!DOCTYPE html><html><body style=\"font-family:-apple-system,'Segoe UI',sans-serif;color:#333\">"
+                + "<img src=\"cid:logo\" alt=\"logo\" style=\"height:40px;margin-bottom:16px\"/>"
+                + "<h2 style=\"margin:0 0 12px\">忘记密码验证码</h2>"
+                + "<p>" + safeName + " 你好:</p>"
+                + "<p>你正在为账号 <b>" + username + "</b> 重置登录密码。</p>"
+                + "<p>验证码:<span style=\"font-size:24px;font-weight:bold;letter-spacing:4px;color:#1677ff\">"
+                + code + "</span></p>"
+                + "<p style=\"color:#888;font-size:12px\">验证码 " + expireMinutes
+                + " 分钟内有效,请尽快使用。如非本人操作请忽略本邮件。</p>"
+                + "<hr style=\"border:none;border-top:1px solid #eee;margin:20px 0\"/>"
+                + "<p style=\"color:#888;font-size:12px;white-space:pre-line\">" + signature + "</p>"
+                + "</body></html>";
+        sendNasMail("PASSWORD_RESET_CODE", toEmail, subject, html, plain, "忘记密码验证码", username);
+    }
+
     /** NAS 邮件发送公共 helper:异步线程内同步发送 + 写 email_log（失败仅记不影响业务） */
     private void sendNasMail(String triggerKey, String toEmail, String subject, String html, String plain,
                              String logTag, String username) {

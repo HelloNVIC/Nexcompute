@@ -10,6 +10,7 @@ import {
 import { groupApi, type UserInfoDto, type ResearchGroup } from '@/api/group'
 import { instanceApi, type PhysicalInstance } from '@/api/instance'
 import { useAuthStore } from '@/stores/auth'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const auth = useAuthStore()
 const isAdmin = computed(() => auth.role === 'ADMIN')
@@ -102,9 +103,10 @@ function confirmRevoke(token: string): void {
   })
 }
 
-function copyLink(token: string): void {
-  navigator.clipboard.writeText(registerUrl(token))
-  message.success('链接已复制')
+async function copyLink(token: string): Promise<void> {
+  const ok = await copyToClipboard(registerUrl(token))
+  if (ok) message.success('链接已复制')
+  else message.error('复制失败，请手动选中链接复制')
 }
 
 // 导师为学生分配物理实例（多选）+ 单容器内存上限（platform-refinements 8.2/8.5）

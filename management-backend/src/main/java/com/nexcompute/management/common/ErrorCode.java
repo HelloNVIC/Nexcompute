@@ -21,6 +21,15 @@ public enum ErrorCode {
     ACCOUNT_DISABLED(1002, "账号已禁用"),
     TOKEN_INVALID(1003, "令牌无效或已过期"),
     PASSWORD_TOO_WEAK(1004, "密码强度不足"),
+    // password-management-and-id-validation：改密 / 忘记密码
+    OLD_PASSWORD_INCORRECT(1013, "旧密码错误"),
+    PASSWORD_SAME_AS_OLD(1014, "新密码不得与旧密码相同"),
+    PASSWORD_RESET_SEND_TOO_FREQUENT(1015, "验证码发送过于频繁"),
+    PASSWORD_RESET_OTP_NOT_FOUND(1016, "验证码不存在或已失效"),
+    PASSWORD_RESET_OTP_EXPIRED(1017, "验证码已过期"),
+    PASSWORD_RESET_OTP_CONSUMED(1018, "验证码已使用"),
+    PASSWORD_RESET_OTP_TOO_MANY_ATTEMPTS(1019, "验证码错误次数过多，请重新获取"),
+    PASSWORD_RESET_OTP_INVALID(1020, "验证码错误"),
 
     // 权限相关 2xxx
     PERMISSION_DENIED(2001, "权限不足"),

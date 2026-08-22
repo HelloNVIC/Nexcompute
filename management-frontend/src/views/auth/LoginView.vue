@@ -15,7 +15,7 @@ const form = reactive({ username: '', password: '' })
 
 async function handleSubmit(): Promise<void> {
   if (!form.username || !form.password) {
-    message.warning('请输入用户名和密码')
+    message.warning('请输入学号/工号和密码')
     return
   }
   loading.value = true
@@ -35,8 +35,8 @@ async function handleSubmit(): Promise<void> {
 <template>
   <AuthLayout title="欢迎登录">
     <a-form layout="vertical" @submit.prevent="handleSubmit">
-      <a-form-item label="用户名">
-        <a-input v-model:value="form.username" placeholder="请输入用户名" size="large">
+      <a-form-item label="学号/工号">
+        <a-input v-model:value="form.username" placeholder="请输入学号/工号" size="large">
           <template #prefix><UserOutlined /></template>
         </a-input>
       </a-form-item>
@@ -53,6 +53,9 @@ async function handleSubmit(): Promise<void> {
       <a-button type="primary" size="large" block :loading="loading" @click="handleSubmit">
         登录
       </a-button>
+      <div style="text-align: right; margin-top: 8px">
+        <a-button type="link" style="padding: 0" @click="router.push('/forgot-password')">忘记密码?</a-button>
+      </div>
     </a-form>
   </AuthLayout>
 </template>

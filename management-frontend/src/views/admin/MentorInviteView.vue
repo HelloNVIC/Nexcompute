@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { mentorInviteApi, type MentorRegistrationLink } from '@/api/mentorInvite'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const links = ref<MentorRegistrationLink[]>([])
 const loading = ref(false)
@@ -48,9 +49,10 @@ async function createLink(): Promise<void> {
   }
 }
 
-function copyLink(token: string): void {
-  navigator.clipboard.writeText(mentorInviteApi.registerUrl(token))
-  message.success('邀请链接已复制')
+async function copyLink(token: string): Promise<void> {
+  const ok = await copyToClipboard(mentorInviteApi.registerUrl(token))
+  if (ok) message.success('邀请链接已复制')
+  else message.error('复制失败，请手动选中链接复制')
 }
 
 function confirmRevoke(token: string): void {

@@ -27,6 +27,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '管理员注册' },
   },
   {
+    path: '/forgot-password',
+    name: 'forgot-password',
+    component: () => import('@/views/auth/ForgotPasswordView.vue'),
+    meta: { public: true, title: '忘记密码' },
+  },
+  {
     path: '/nas-register',
     name: 'nas-register',
     component: () => import('@/views/auth/NasRegisterView.vue'),

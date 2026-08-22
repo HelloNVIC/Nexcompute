@@ -270,8 +270,8 @@ const agentInfo = computed(() => {
           <template #title><span class="card-title">系统信息</span></template>
           <a-descriptions :column="1" size="small">
             <a-descriptions-item label="平台版本">合算 Nexcompute 管理端 v0.1.0</a-descriptions-item>
-            <a-descriptions-item v-if="systemInfo?.owner" label="所有者">{{ systemInfo.owner }}</a-descriptions-item>
-            <a-descriptions-item v-if="systemInfo?.ownerPhone" label="所有者电话">{{ systemInfo.ownerPhone }}</a-descriptions-item>
+            <a-descriptions-item v-if="systemInfo?.owner" label="责任人">{{ systemInfo.owner }}</a-descriptions-item>
+            <a-descriptions-item v-if="systemInfo?.ownerPhone" label="责任人电话">{{ systemInfo.ownerPhone }}</a-descriptions-item>
             <a-descriptions-item v-if="systemInfo?.maintainer" label="维护人">{{ systemInfo.maintainer }}</a-descriptions-item>
             <a-descriptions-item v-if="systemInfo?.maintainerPhone" label="维护电话">{{ systemInfo.maintainerPhone }}</a-descriptions-item>
             <a-descriptions-item label="在线实例">{{ onlineInstances }} / {{ instances.length }}</a-descriptions-item>

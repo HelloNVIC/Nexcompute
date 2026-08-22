@@ -166,7 +166,12 @@ function confirmDeleteGroup(g: ResearchGroup): void {
       <a-table-column title="描述" data-index="description">
         <template #default="{ record }">{{ record.description ?? '-' }}</template>
       </a-table-column>
-      <a-table-column title="导师 ID" data-index="mentorId" :width="100" :sorter="(a: ResearchGroup, b: ResearchGroup) => (a.mentorId ?? 0) - (b.mentorId ?? 0)" />
+      <a-table-column title="导师姓名" data-index="mentorName" :width="120" :sorter="(a: ResearchGroup, b: ResearchGroup) => (a.mentorName||'').localeCompare(b.mentorName||'')">
+        <template #default="{ record }">{{ record.mentorName ?? '-' }}</template>
+      </a-table-column>
+      <a-table-column title="已分配物理实例数量" data-index="allocatedInstanceCount" :width="160" :sorter="(a: ResearchGroup, b: ResearchGroup) => (a.allocatedInstanceCount ?? 0) - (b.allocatedInstanceCount ?? 0)">
+        <template #default="{ record }">{{ record.allocatedInstanceCount ?? 0 }}</template>
+      </a-table-column>
       <a-table-column title="操作" :width="280">
         <template #default="{ record }">
           <a-button type="link" size="small" @click="showMembers(record)">查看成员</a-button>

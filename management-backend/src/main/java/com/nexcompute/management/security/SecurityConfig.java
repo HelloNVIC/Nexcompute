@@ -42,7 +42,8 @@ public class SecurityConfig {
             .csrf(csrf -> csrf.disable())
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/auth/login", "/auth/register", "/auth/mentor-register", "/auth/admin-register",
+                .requestMatchers("/auth/login", "/auth/register", "/auth/register/validate", "/auth/register/check-username",
+                    "/auth/forgot-password/**", "/auth/mentor-register", "/auth/admin-register",
                     // nas-allocation D5：公开 NAS 注册端点免鉴权（凭邀请令牌）
                     "/nas-allocation/register/**",
                     // newapi-user-allocation D5：公开 NewAPI 注册端点免鉴权（凭邀请令牌）

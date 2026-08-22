@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
+import type { FormInstance } from 'ant-design-vue'
 import { http } from '@/utils/request'
 import { useAuthStore, type UserRole } from '@/stores/auth'
 import type { UserInfoDto } from '@/types'
 import { emailApi, type EmailPref } from '@/api/email'
+import { authApi } from '@/api/auth'
 
 const auth = useAuthStore()
 
@@ -68,6 +70,54 @@ async function handleSave(): Promise<void> {
     // 拦截器已提示
   }
 }
+
+// 修改密码（password-management-and-id-validation D7）：旧密码 + 新密码 + 确认新密码
+const pwdFormRef = ref<FormInstance>()
+const pwdLoading = ref(false)
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+
+const pwdRules = {
+  oldPassword: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请设置新密码', trigger: 'blur' },
+    { min: 6, message: '密码至少 6 位', trigger: 'blur' },
+    {
+      validator: (_rule: unknown, value: string) =>
+        /^(?=.*[0-9])(?=.*[a-zA-Z]).{6,}$/.test(value)
+          ? Promise.resolve()
+          : Promise.reject('密码需包含数字和字母'),
+      trigger: 'blur',
+    },
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认新密码', trigger: 'blur' },
+    {
+      validator: (_rule: unknown, value: string) =>
+        !value || value === pwdForm.newPassword
+          ? Promise.resolve()
+          : Promise.reject('两次输入的新密码不一致'),
+      trigger: 'blur',
+    },
+  ],
+}
+
+async function handleChangePassword(): Promise<void> {
+  try {
+    await pwdFormRef.value?.validate()
+  } catch {
+    return
+  }
+  pwdLoading.value = true
+  try {
+    await authApi.changePassword(pwdForm.oldPassword, pwdForm.newPassword)
+    message.success('密码修改成功')
+    pwdFormRef.value?.resetFields()
+  } catch {
+    // 失败由 request 拦截器按后端 code 提示（旧密码错误/强度不足/新旧相同）
+  } finally {
+    pwdLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -97,6 +147,35 @@ async function handleSave(): Promise<void> {
             <a-input v-model:value="form.phone" />
           </a-form-item>
           <a-button type="primary" @click="handleSave">保存</a-button>
+        </a-form>
+      </a-card>
+
+      <a-card title="修改密码" class="span-full">
+        <a-form
+          ref="pwdFormRef"
+          :model="pwdForm"
+          :rules="pwdRules"
+          layout="vertical"
+          @submit.prevent="handleChangePassword"
+        >
+          <a-form-item label="旧密码" name="oldPassword">
+            <a-input-password v-model:value="pwdForm.oldPassword" placeholder="请输入当前密码" />
+          </a-form-item>
+          <a-form-item label="新密码" name="newPassword">
+            <a-input-password
+              v-model:value="pwdForm.newPassword"
+              placeholder="至少 6 位，含数字和字母"
+            />
+          </a-form-item>
+          <a-form-item label="确认新密码" name="confirmPassword">
+            <a-input-password
+              v-model:value="pwdForm.confirmPassword"
+              placeholder="请再次输入新密码"
+            />
+          </a-form-item>
+          <a-button type="primary" :loading="pwdLoading" @click="handleChangePassword">
+            修改密码
+          </a-button>
         </a-form>
       </a-card>
 

@@ -14,6 +14,8 @@ export interface PhysicalInstance {
   lastStatus?: string
   storageRoot?: string
   localAdminPasswordHash?: string
+  /** 机器码（硬件指纹，受控端心跳上报） */
+  machineCode?: string
 }
 
 export interface PowerShellResult {

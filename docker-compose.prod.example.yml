@@ -76,6 +76,12 @@ services:
       EMAIL_USER: "<smtp-user>"
       EMAIL_PASSWD: "<smtp-auth-code>"
       EMAIL_BRAND_NAME: "合算 Nexcompute"
+      # ===== 忘记密码验证码（password-management-and-id-validation D10；默认值已内置 application.yml，取消注释按需覆盖）=====
+      # PASSWORD_RESET_CODE_EXPIRE_MINUTES: 10        # 验证码有效期（分钟）
+      # PASSWORD_RESET_SEND_COOLDOWN_SECONDS: 60      # 同一用户名发送限频冷却（秒）
+      # PASSWORD_RESET_MAX_ATTEMPTS: 5                # 每码校验失败次数上限（达上限作废）
+      # PASSWORD_RESET_CLEANUP_INTERVAL_HOURS: 6     # 过期/已消费码清理扫描间隔（小时）
+      # PASSWORD_RESET_CLEANUP_RETAIN_DAYS: 7        # 清理保留天数
     # 后端对外暴露 8080：受控端直连（ServerURL=http://<服务器IP>:8080）+ 直连 API 调试。
     # 若仅用前端 nginx(80) 反代 /api（受控端改连 http://<服务器IP>/api/agent/*），可注释掉本端口。
     ports:

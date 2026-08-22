@@ -8,6 +8,7 @@ import com.nexcompute.management.domain.ResearchGroup;
 import com.nexcompute.management.domain.User;
 import com.nexcompute.management.domain.UserRole;
 import com.nexcompute.management.repository.GroupMemberRepository;
+import com.nexcompute.management.repository.MachineAllocationRepository;
 import com.nexcompute.management.repository.ResearchGroupRepository;
 import com.nexcompute.management.repository.UserRepository;
 import com.nexcompute.management.security.SecurityUtils;
@@ -28,6 +29,7 @@ public class ResearchGroupService {
     private final ResearchGroupRepository groupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
+    private final MachineAllocationRepository machineAllocationRepository;
 
     public ResearchGroup getGroup(Long id) {
         return groupRepository.findById(id)
@@ -54,6 +56,27 @@ public class ResearchGroupService {
     public List<ResearchGroup> listAll() {
         return groupRepository.findAll();
     }
+
+    /**
+     * 课题组列表（含导师姓名 + 已分配物理实例数量），供管理员「课题组管理」表展示。
+     * mentorName：由 mentor_id 解析 app_user.real_name（无导师则空）；
+     * allocatedInstanceCount：该组已分配的去重物理实例数（machine_allocation.group_id 按 instance_id 去重，
+     * 与 listGroupAllocations 口径一致）。
+     */
+    @Transactional(readOnly = true)
+    public List<GroupSummaryDto> listAllWithDetails() {
+        return groupRepository.findAll().stream().map(g -> {
+            String mentorName = g.getMentorId() == null ? null
+                    : userRepository.findById(g.getMentorId()).map(User::getRealName).orElse(null);
+            long allocatedCount = machineAllocationRepository.countDistinctInstanceIdByGroupId(g.getId());
+            return new GroupSummaryDto(g.getId(), g.getName(), g.getDescription(),
+                    g.getMentorId(), mentorName, allocatedCount);
+        }).toList();
+    }
+
+    /** 课题组列表项（含导师姓名 + 已分配物理实例数量） */
+    public record GroupSummaryDto(Long id, String name, String description, Long mentorId,
+                                  String mentorName, long allocatedInstanceCount) {}
 
     @Audited(action = "GROUP_CREATE", targetType = "GROUP", targetIdExpr = "#result.id")
     @Transactional

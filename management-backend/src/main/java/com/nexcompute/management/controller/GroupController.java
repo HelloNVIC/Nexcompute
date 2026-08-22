@@ -28,11 +28,11 @@ public class GroupController {
         return ApiResponse.success(groupService.getMyGroup());
     }
 
-    /** 管理员查看所有课题组 */
+    /** 管理员查看所有课题组（含导师姓名 + 已分配物理实例数量） */
     @GetMapping
     @RequirePermission(module = "user", action = RequirePermission.Action.VIEW)
-    public ApiResponse<List<ResearchGroup>> list() {
-        return ApiResponse.success(groupService.listAll());
+    public ApiResponse<List<ResearchGroupService.GroupSummaryDto>> list() {
+        return ApiResponse.success(groupService.listAllWithDetails());
     }
 
     @GetMapping("/{id}")

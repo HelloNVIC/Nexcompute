@@ -29,6 +29,9 @@ public interface MachineAllocationRepository extends JpaRepository<MachineAlloca
     @Query("select m from MachineAllocation m where m.groupId is not null")
     List<MachineAllocation> findGroupAllocations();
 
+    /** 该课题组已分配的去重物理实例数量（课题组管理表「已分配物理实例数量」字段，按 instance_id 去重，与 listGroupAllocations 口径一致） */
+    long countDistinctInstanceIdByGroupId(Long groupId);
+
     /** 由某用户分配的记录（platform-refinements #2：导师"已分配机器"显示自己分配的） */
     List<MachineAllocation> findByAllocatedBy(Long allocatedBy);
 }

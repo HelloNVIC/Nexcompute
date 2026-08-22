@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { adminInviteApi, type AdminRegistrationLink } from '@/api/adminInvite'
+import { copyToClipboard } from '@/utils/clipboard'
 
 const links = ref<AdminRegistrationLink[]>([])
 const loading = ref(false)
@@ -48,9 +49,10 @@ async function createLink(): Promise<void> {
   }
 }
 
-function copyLink(token: string): void {
-  navigator.clipboard.writeText(adminInviteApi.registerUrl(token))
-  message.success('邀请链接已复制')
+async function copyLink(token: string): Promise<void> {
+  const ok = await copyToClipboard(adminInviteApi.registerUrl(token))
+  if (ok) message.success('邀请链接已复制')
+  else message.error('复制失败，请手动选中链接复制')
 }
 
 function confirmRevoke(token: string): void {
