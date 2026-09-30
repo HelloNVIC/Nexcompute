@@ -27,6 +27,12 @@ export interface ImageMetadata {
   sourceWorkerId?: string
   /** 可见性：PRIVATE / SHARED_TO_ALL / SHARED */
   visibility?: string
+  /** 分发方式（V35）：TAR=管理端 tar 分发（存量）；REGISTRY=私有仓库 pull 分发 */
+  distribution?: 'TAR' | 'REGISTRY'
+  /** 仓库有效性：null=未检查（TAR 恒 null），true/false 为检查结论；REGISTRY 镜像须 true 才可用于创建容器 */
+  registryValid?: boolean | null
+  /** 最近一次仓库有效性检查时间 */
+  registryCheckedAt?: string | null
   createdAt: string
 }
 
@@ -35,6 +41,38 @@ export interface ParsedTar {
   name: string
   tag: string
   appPorts: number[]
+}
+
+/** 私有仓库镜像登记请求（registry-image-distribution D3） */
+export interface RegisterImagePayload {
+  name: string
+  tag?: string
+  appPorts?: number[]
+  mountPoint?: string
+  usageInstructions?: string
+}
+
+/** 推送命令（操作列"上传"弹窗数据，D3：命令由后端拼装） */
+export interface PushCommands {
+  registryUrl: string
+  tagCmd: string
+  pushCmd: string
+}
+
+/** 无标记镜像（仓库中存在但系统内无记录，D3 仅管理员） */
+export interface UntaggedImage {
+  repo: string
+  tags: string[]
+}
+
+/** 无标记镜像补录请求（D3 仅管理员） */
+export interface ClaimUntaggedPayload {
+  repo: string
+  tag?: string
+  appPorts?: number[]
+  mountPoint?: string
+  usageInstructions?: string
+  visibility?: 'SHARED_TO_ALL' | 'PRIVATE'
 }
 
 export const imageApi = {
@@ -81,4 +119,16 @@ export const imageApi = {
   /** 编辑镜像应用端口、使用说明与容器内挂载点 */
   editMetadata: (id: number, appPorts: number[], usageInstructions: string, mountPoint?: string) =>
     http.put<ImageMetadata>(`/images/${id}/metadata`, { appPorts, usageInstructions, mountPoint }),
+  // ===== registry-image-distribution：私有仓库镜像 =====
+  /** 登记私有仓库镜像（无文件；登记后经"上传"弹窗命令自行推送） */
+  register: (payload: RegisterImagePayload) => http.post<ImageMetadata>('/images/register', payload),
+  /** 刷新仓库有效性（Registry v2 API 检查是否已推送） */
+  refreshValidity: (id: number) => http.post<ImageMetadata>(`/images/${id}/refresh-validity`),
+  /** 推送命令（操作列"上传"弹窗数据） */
+  pushCommands: (id: number) => http.get<PushCommands>(`/images/${id}/push-commands`),
+  /** 无标记镜像列表（仅管理员） */
+  listUntagged: () => http.get<UntaggedImage[]>('/images/registry/untagged'),
+  /** 无标记镜像补录（仅管理员） */
+  claimUntagged: (payload: ClaimUntaggedPayload) =>
+    http.post<ImageMetadata>('/images/registry/untagged/claim', payload),
 }

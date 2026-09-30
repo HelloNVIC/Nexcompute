@@ -103,6 +103,8 @@ services:
       EMAIL_USER: <smtp-user>
       EMAIL_PASSWD: <smtp-auth-code>
       EMAIL_BRAND_NAME: "合算 Nexcompute"
+      # ===== 内网私有镜像仓库（镜像分发；push/pull 与 /v2 检查同端口）=====
+      REGISTRY_URL: 10.13.66.25:5000
       # ===== 忘记密码验证码（password-management-and-id-validation D10；默认值已内置 application.yml，取消注释按需覆盖）=====
       # PASSWORD_RESET_CODE_EXPIRE_MINUTES: 10        # 验证码有效期（分钟）
       # PASSWORD_RESET_SEND_COOLDOWN_SECONDS: 60      # 同一用户名发送限频冷却（秒）

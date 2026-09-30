@@ -51,10 +51,11 @@ class OtaProgressNoCompleteTest {
         AgentSessionRegistry registry = spy(new AgentSessionRegistry(new ObjectMapper()));
         OtaProgressTracker tracker = new OtaProgressTracker(
                 mock(com.nexcompute.management.repository.AgentUpgradeTaskRepository.class),
-                new ObjectMapper());
+                new ObjectMapper(),
+                new ProgressRouter());
 
         tracker.register("cmd-x", 1L, 10L, "INST-1", "v2");
-        tracker.onProgress("cmd-x", OtaProgressTracker.STAGE_DOWNLOADING, 50);
+        tracker.onProgress("cmd-x", OtaProgressTracker.STAGE_DOWNLOADING, 50, null);
 
         // tracker 不应触发 registry.awaitResult（progress 不 complete future）
         verify(registry, never()).awaitResult(anyString(), any(), anyLong());

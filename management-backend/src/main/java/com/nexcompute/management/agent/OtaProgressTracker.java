@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class OtaProgressTracker {
+public class OtaProgressTracker implements ProgressRouter.ProgressListener {
 
     public static final String STAGE_DOWNLOADING = "downloading";
     public static final String STAGE_VERIFYING = "verifying";
@@ -34,6 +34,7 @@ public class OtaProgressTracker {
 
     private final AgentUpgradeTaskRepository taskRepository;
     private final ObjectMapper objectMapper;
+    private final ProgressRouter progressRouter;
 
     /** commandId -> 状态 */
     private final Map<String, UpgradeState> states = new ConcurrentHashMap<>();
@@ -63,7 +64,7 @@ public class OtaProgressTracker {
         return m;
     }
 
-    /** OTA 服务下发命令前注册：绑定 commandId <-> task/instance */
+    /** OTA 服务下发命令前注册：绑定 commandId <-> task/instance（D6：同时向 ProgressRouter 注册本监听器） */
     public void register(String commandId, Long taskId, Long instanceId, String instanceNumber, String targetVersion) {
         UpgradeState s = new UpgradeState();
         s.commandId = commandId;
@@ -75,16 +76,21 @@ public class OtaProgressTracker {
         if (instanceNumber != null) {
             instanceToCommand.put(instanceNumber, commandId);
         }
+        progressRouter.register(commandId, this);
     }
 
-    /** 受控端回传 progress 消息：更新 stage + 该段百分比，绝不 complete future（R1） */
-    public void onProgress(String commandId, String stage, int percent) {
+    /**
+     * 受控端回传 progress 消息（经 ProgressRouter 分发，D6）：更新 stage + 该段百分比，绝不 complete future（R1）。
+     * OTA 不使用 text 分层文本（D5），忽略。
+     */
+    @Override
+    public void onProgress(String commandId, String stage, Integer percent, String text) {
         UpgradeState s = states.get(commandId);
         if (s == null) {
             return;
         }
         if (stage != null) {
-            s.percents.put(stage, clamp(percent));
+            s.percents.put(stage, clamp(percent == null ? 0 : percent));
             if (STAGE_REPLACING.equals(stage)) {
                 // 收到 replacing -> 记录推断段起点（受控端即将退出）
                 if (s.replacingStartMs == 0) {
@@ -171,12 +177,13 @@ public class OtaProgressTracker {
         persist(s);
     }
 
-    /** 升级结束（成功/失败）清理 */
+    /** 升级结束（成功/失败）清理（D6：同时从 ProgressRouter 注销） */
     public void finish(String commandId) {
         UpgradeState s = states.remove(commandId);
         if (s != null && s.instanceNumber != null) {
             instanceToCommand.remove(s.instanceNumber, commandId);
         }
+        progressRouter.unregister(commandId);
     }
 
     private void persist(UpgradeState s) {

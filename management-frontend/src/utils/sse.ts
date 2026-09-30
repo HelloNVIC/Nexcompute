@@ -11,6 +11,8 @@ export type SseEventType =
   | 'container.changed'
   | 'ticket.changed'
   | 'storage.changed'
+  // registry-image-distribution D6：创建容器时私有仓库镜像拉取实时进度
+  | 'containerImagePull'
 
 type EventHandler = (data: unknown) => void
 

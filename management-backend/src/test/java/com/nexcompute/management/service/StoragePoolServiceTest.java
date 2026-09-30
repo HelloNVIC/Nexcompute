@@ -153,8 +153,9 @@ class StoragePoolServiceTest {
     void migratePool_withRunningContainers_throws() {
         when(poolRepository.findById(1L)).thenReturn(Optional.of(testPool));
         when(agentCommandService.isAgentConnected(anyString())).thenReturn(true);
+        // storage-guard：目标实例须已设存储池根目录，否则前置校验先抛（走不到运行容器检查）
         when(instanceRepository.findById(2L)).thenReturn(Optional.of(
-                PhysicalInstance.builder().id(2L).instanceNumber("02").build()));
+                PhysicalInstance.builder().id(2L).instanceNumber("02").storageRoot("/data/pools").build()));
         Container running = Container.builder().status("RUNNING").build();
         when(containerRepository.findByStoragePoolIdAndStatus(1L, "RUNNING"))
                 .thenReturn(List.of(running));

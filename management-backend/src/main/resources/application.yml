@@ -119,6 +119,10 @@ nexcompute:
     max-attempts: ${PASSWORD_RESET_MAX_ATTEMPTS:5}                       # 每码校验失败次数上限（达上限作废）
     cleanup-interval-hours: ${PASSWORD_RESET_CLEANUP_INTERVAL_HOURS:6}  # 过期/已消费码清理扫描间隔（小时）
     cleanup-retain-days: ${PASSWORD_RESET_CLEANUP_RETAIN_DAYS:7}       # 清理保留天数（删 expires_at < now - retain-days）
+  # registry-image-distribution D1：内网私有镜像仓库（push/pull 与 /v2 API 检查同端口同服务）
+  # docker 引用前缀（{url}/name:tag）与 v2 API 基址（http://{url}/v2/...）同源派生，单配置项即可
+  registry:
+    url: ${REGISTRY_URL:10.13.66.25:5000}                       # 私有镜像仓库 host:port
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
 

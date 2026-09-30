@@ -10,8 +10,10 @@ import com.nexcompute.management.common.ErrorCode;
 import com.nexcompute.management.domain.*;
 import com.nexcompute.management.dto.ConnectionInfo;
 import com.nexcompute.management.dto.CreateContainerRequest;
+import com.nexcompute.management.registry.RegistryClient;
 import com.nexcompute.management.repository.*;
 import com.nexcompute.management.security.SecurityUtils;
+import com.nexcompute.management.sse.SseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -48,6 +50,8 @@ public class ContainerService {
     private final MachineAllocationRepository machineAllocationRepository;
     private final ContainerShareRepository containerShareRepository;
     private final EmailService emailService;
+    private final RegistryClient registryClient;
+    private final SseService sseService;
 
     /**
      * 创建容器（任务 10.3）
@@ -100,7 +104,7 @@ public class ContainerService {
         }
 
         // 生成 docker run 命令参数（任务 10.3 spec：含资源限制与软限制 env）
-        Map<String, Object> payload = buildDockerRunPayload(request, allocations, instance);
+        Map<String, Object> payload = buildDockerRunPayload(request, allocations, instance, image);
 
         // 下发受控端执行（任务 10.4）
         AgentCommandResult result = agentCommandService.sendCommand(
@@ -157,11 +161,18 @@ public class ContainerService {
     }
 
     /**
-     * 创建容器前按需分发镜像（任务 2.8 / 3.5）。
-     * 复用受控端既有 image.load：受控端检查本地是否已持有该镜像，已持有则跳过，
-     * 否则经 file-transfer 下载 tar 并 docker load。分发失败中止创建。
+     * 创建容器前按需分发镜像（任务 2.8 / 3.5；registry-image-distribution D5）。
+     * - REGISTRY 镜像：下发 image.pull（受控端 docker pull {registryUrl}/{name:tag}），
+     *   进度经 ProgressRouter -> SSE（containerImagePull）实时推给创建用户；
+     *   旧版受控端不识别 image.pull，错误透传并附"受控端需升级"提示（D5 任务 5.4）。
+     * - TAR 镜像（存量）：原 image.load 不变（file-transfer 下载 tar + docker load）。
+     * 两者均失败中止创建；镜像已在本地时受控端跳过（already_exists）。
      */
     private void ensureImageLoaded(PhysicalInstance instance, ImageMetadata image) {
+        if (ImageService.DISTRIBUTION_REGISTRY.equals(image.getDistribution())) {
+            pullRegistryImage(instance, image);
+            return;
+        }
         if (image.getTarPath() == null || image.getTarPath().isBlank()) {
             // 无 tar 路径（如 Dockerfile 构建产物依赖受控端本地）则跳过分发
             return;
@@ -177,6 +188,39 @@ public class ContainerService {
                     "镜像分发失败：" + (loadResult != null ? loadResult.getError() : "受控端无响应"));
         }
         // 受控端返回 already_exists / loaded 均视为成功
+    }
+
+    /**
+     * REGISTRY 镜像经私有仓库拉取分发（D5/D6）。
+     * 进度为旁路推送（丢帧不影响结果），最终成败仍由同步命令结果决定。
+     */
+    private void pullRegistryImage(PhysicalInstance instance, ImageMetadata image) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        String imageRef = registryClient.getRegistryUrl() + "/" + image.getRef();
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("imageRef", imageRef);
+
+        AgentCommandResult pullResult = agentCommandService.sendCommand(
+                instance.getInstanceNumber(), "image.pull", payload, 600000,
+                (commandId, stage, percent, text) -> {
+                    Map<String, Object> event = new HashMap<>();
+                    event.put("imageRef", imageRef);
+                    event.put("stage", stage == null ? "pulling" : stage);
+                    event.put("percent", percent == null ? 0 : percent);
+                    if (text != null) {
+                        event.put("text", text);
+                    }
+                    sseService.pushToUser(userId, "containerImagePull", event);
+                });
+        if (pullResult == null || !pullResult.isSuccess()) {
+            // 旧版受控端遇 image.pull 回"未知命令类型"：透传并附升级提示（任务 5.4）
+            String error = pullResult != null ? pullResult.getError() : "受控端无响应";
+            if (error != null && error.contains("未知命令")) {
+                error = error + "（该镜像存于私有仓库，需升级受控端后拉取）";
+            }
+            throw new BusinessException(ErrorCode.IMAGE_TRANSFER_FAILED, "镜像拉取失败：" + error);
+        }
+        // 受控端返回 already_exists / pulled 均视为成功
     }
 
     /**
@@ -355,12 +399,15 @@ public class ContainerService {
 
     /**
      * 容器提交镜像持久化（platform-refinements 6.3）。
-     * 建 UPLOADING 镜像元数据（commit 默认 PRIVATE），下发 image.commit 命令（含 project/note/ownerWorkerId）。
-     * 受控端 commit+save 后经 file-transfer 上传 tar，上传完成回调置 READY（6.4），失败置 FAILED。
+     * registry-image-distribution D4：commit 后不再 save+tar 回传，改为 tag+push 私有仓库。
+     * repo 名沿用原 tar 命名规则（工号-项目-镜像名-标签-备注-随机串，各段 sanitize 为合法 docker repo），
+     * tag 固定 latest；建 UPLOADING 记录（distribution=REGISTRY，自带事务先提交）后下发 image.commit
+     * （payload 含 registryUrl/repoName），成功置 READY+registry_valid=true，失败/超时置 FAILED。
      */
     @Audited(action = "CONTAINER_COMMIT_IMAGE", targetType = "CONTAINER", targetIdExpr = "#containerId")
     // platform-refinements #3b：不加 @Transactional——registerCommitImage 自带事务并先提交，
     // 否则 sendCommand 阻塞期间镜像未提交，完成回调的 onImageTransfer 读不到镜像 -> IMAGE_NOT_FOUND(404)。
+    // 失败路径 markImageFailed / 成功路径 markRegistryImagePushed 均自带事务，防外层回滚吞状态落盘。
     public ImageMetadata commitContainerImage(Long containerId, String imageName, String imageTag,
                                              String project, String note) {
         Long userId = SecurityUtils.getCurrentUserId();
@@ -375,31 +422,79 @@ public class ContainerService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         String workerId = owner.getStudentId() != null ? owner.getStudentId() : "user" + owner.getId();
 
+        String repo = buildCommitRepoName(workerId, project, imageName, imageTag, note);
+        String tag = "latest";
         String sourceContainer = container.getDockerId() != null ? container.getDockerId() : container.getName();
         ImageMetadata image = imageService.registerCommitImage(
-                imageName, imageTag, container.getOwnerId(), sourceContainer,
-                project, note, workerId, null, null, null, container.getMountPoint());
-
-        // transferId 编码 imageId，供 file-transfer 完成回调解析置 READY（6.4）
-        String transferId = "commit-" + image.getId() + "-" + UUID.randomUUID().toString().replace("-", "");
+                repo, tag, container.getOwnerId(), sourceContainer,
+                project, note, workerId, null, null, null, container.getMountPoint(),
+                ImageService.DISTRIBUTION_REGISTRY);
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("containerId", container.getDockerId());
-        payload.put("imageName", imageName);
-        payload.put("imageTag", imageTag != null ? imageTag : "latest");
+        payload.put("repoName", repo);
+        payload.put("tag", tag);
+        payload.put("registryUrl", registryClient.getRegistryUrl());
         payload.put("project", project);
         payload.put("note", note);
         payload.put("ownerWorkerId", workerId);
-        payload.put("transferId", transferId);
 
         AgentCommandResult result = agentCommandService.sendCommand(
-                instance.getInstanceNumber(), "image.commit", payload, 600000);
+                instance.getInstanceNumber(), "image.commit", payload, 1_800_000); // D4：push 大镜像，30min
         if (result == null || !result.isSuccess()) {
             imageService.markImageFailed(image.getId());
             throw new BusinessException(ErrorCode.CONTAINER_COMMAND_FAILED,
                     result != null ? result.getError() : "受控端无响应");
         }
+        // push 确认成功：READY + registry_valid=true；sizeBytes 若回传则记录
+        imageService.markRegistryImagePushed(image.getId());
+        String sizeBytes = parseOutputField(result.getOutput(), "sizeBytes");
+        if (sizeBytes != null) {
+            try {
+                imageService.updateSizeBytes(image.getId(), Long.parseLong(sizeBytes));
+            } catch (NumberFormatException ignored) {
+            }
+        }
         return imageService.getImage(image.getId());
+    }
+
+    /**
+     * commit 镜像 repo 名（D4）：沿用原 tar 命名规则 工号-项目-镜像名-标签-备注-随机串。
+     * 各段 sanitize 为合法 docker repo 字符：小写字母数字 + '-'（大写折小写，其余非法字符折 '-'），
+     * 分隔符连续折叠为单个 '-'，空段以 x 占位；末段随机 8 位十六进制防重名。
+     */
+    static String buildCommitRepoName(String workerId, String project, String imageName, String imageTag, String note) {
+        String random = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        return String.join("-",
+                sanitizeRepoSegment(workerId),
+                sanitizeRepoSegment(project),
+                sanitizeRepoSegment(imageName),
+                sanitizeRepoSegment(imageTag),
+                sanitizeRepoSegment(note),
+                random);
+    }
+
+    /** 段内仅保留小写字母数字；大写折小写，'.'/'_' 与其余非法字符（含中文/路径分隔符）折 '-'，连续 '-' 折叠。 */
+    private static String sanitizeRepoSegment(String s) {
+        String t = s == null ? "" : s.trim();
+        StringBuilder b = new StringBuilder();
+        boolean lastDash = false;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c >= 'A' && c <= 'Z') c = Character.toLowerCase(c);
+            boolean alnum = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+            if (alnum) {
+                b.append(c);
+                lastDash = false;
+            } else if (!lastDash && b.length() > 0) {
+                b.append('-');
+                lastDash = true;
+            }
+            // 其余（含前导非法字符）跳过
+        }
+        String out = b.toString();
+        while (out.endsWith("-")) out = out.substring(0, out.length() - 1);
+        return out.isEmpty() ? "x" : out;
     }
 
     /**
@@ -638,11 +733,22 @@ public class ContainerService {
         return mp.trim();
     }
 
+    /**
+     * 生成 container.create payload（任务 10.3）。
+     * registry-image-distribution D5：REGISTRY 镜像下发完整仓库引用（{registryUrl}/name:tag）--
+     * 受控端本地镜像经 image.pull 后仅存在该完整 tag 下，裸 name:tag 会 No such image；
+     * TAR 镜像维持裸 name:tag（docker load 导入即该 tag）。DB/表单快照仍记录裸引用（展示一致）。
+     */
     private Map<String, Object> buildDockerRunPayload(CreateContainerRequest req,
                                                        List<PortAllocation> allocations,
-                                                       PhysicalInstance instance) {
+                                                       PhysicalInstance instance,
+                                                       ImageMetadata image) {
         Map<String, Object> payload = new HashMap<>();
-        payload.put("imageRef", req.getImageRef());
+        String agentImageRef = req.getImageRef();
+        if (image != null && ImageService.DISTRIBUTION_REGISTRY.equals(image.getDistribution())) {
+            agentImageRef = registryClient.getRegistryUrl() + "/" + req.getImageRef();
+        }
+        payload.put("imageRef", agentImageRef);
 
         // GPU 透传显式化（受控端已硬编码 --gpus all 即 DeviceRequests{Count:-1}，
         // 此处显式携带 gpus 字段以便审计与生成命令可见性，不改变运行行为）

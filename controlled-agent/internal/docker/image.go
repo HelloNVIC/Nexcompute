@@ -4,6 +4,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/docker/docker/api/types/container"
@@ -76,8 +77,45 @@ func (m *Manager) ImageExists(ctx context.Context, ref string) (bool, error) {
 	return len(images) > 0, nil
 }
 
+// ImageSize 返回镜像大小（字节，registry-image-distribution D4：commit push 后回传）。
+func (m *Manager) ImageSize(ctx context.Context, ref string) (int64, error) {
+	inspect, err := m.cli.ImageInspect(ctx, ref)
+	if err != nil {
+		return 0, fmt.Errorf("查询镜像大小失败（%s）: %w", ref, err)
+	}
+	return inspect.Size, nil
+}
+
 // RemoveImage 删除镜像
 func (m *Manager) RemoveImage(ctx context.Context, ref string) error {
 	_, err := m.cli.ImageRemove(ctx, ref, image.RemoveOptions{Force: true})
 	return err
+}
+
+// TagImage 给镜像打新标签（docker tag，registry-image-distribution D4：commit 后指向私有仓库）。
+func (m *Manager) TagImage(ctx context.Context, sourceRef, targetRef string) error {
+	if err := m.cli.ImageTag(ctx, sourceRef, targetRef); err != nil {
+		return fmt.Errorf("tag 镜像失败（%s -> %s）: %w", sourceRef, targetRef, err)
+	}
+	return nil
+}
+
+// PushImage 推送镜像至仓库（docker push，D4）。返回进度流（JSON 行，逐层上传状态），
+// 由调用方读取至 EOF 方视为推送完成。私有仓库 insecure HTTP 无认证，PushOptions 零值即可。
+func (m *Manager) PushImage(ctx context.Context, fullRef string) (io.ReadCloser, error) {
+	reader, err := m.cli.ImagePush(ctx, fullRef, image.PushOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("push 镜像失败（%s）: %w", fullRef, err)
+	}
+	return reader, nil
+}
+
+// PullImage 从仓库拉取镜像（docker pull，D5）。返回进度流（JSON 行，逐层下载状态），
+// 由调用方读取至 EOF 方视为拉取完成。
+func (m *Manager) PullImage(ctx context.Context, fullRef string) (io.ReadCloser, error) {
+	reader, err := m.cli.ImagePull(ctx, fullRef, image.PullOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("pull 镜像失败（%s）: %w", fullRef, err)
+	}
+	return reader, nil
 }

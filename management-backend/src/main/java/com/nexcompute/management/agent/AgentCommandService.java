@@ -23,6 +23,7 @@ public class AgentCommandService {
     private final AgentCommandChannel channel;
     private final AgentCredentialRepository credentialRepository;
     private final PhysicalInstanceRepository instanceRepository;
+    private final ProgressRouter progressRouter;
 
     /**
      * 派发命令并同步等待结果（默认 30 秒超时）
@@ -41,6 +42,32 @@ public class AgentCommandService {
                 .build();
         log.info("[AgentCmd] 派发命令: instance={} type={} id={}", instanceNumber, type, command.getId());
         return channel.dispatchAndWait(instanceNumber, command, timeoutMs);
+    }
+
+    /**
+     * 派发命令并同步等待结果，期间经 {@link ProgressRouter} 接收该命令的 progress 帧
+     * （registry-image-distribution D6：暴露 commandId 供注册，listener 生命周期=命令生命周期）。
+     */
+    public AgentCommandResult sendCommand(String instanceNumber, String type, Map<String, Object> payload,
+                                          long timeoutMs, ProgressRouter.ProgressListener listener) {
+        AgentCommand command = AgentCommand.builder()
+                .id(UUID.randomUUID().toString())
+                .type(type)
+                .token(resolveToken(instanceNumber))
+                .payload(payload)
+                .timestamp(System.currentTimeMillis())
+                .build();
+        if (listener != null) {
+            progressRouter.register(command.getId(), listener);
+        }
+        log.info("[AgentCmd] 派发命令: instance={} type={} id={}", instanceNumber, type, command.getId());
+        try {
+            return channel.dispatchAndWait(instanceNumber, command, timeoutMs);
+        } finally {
+            if (listener != null) {
+                progressRouter.unregister(command.getId());
+            }
+        }
     }
 
     /**

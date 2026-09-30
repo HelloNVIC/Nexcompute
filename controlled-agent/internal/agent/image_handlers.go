@@ -2,11 +2,13 @@
 package agent
 
 import (
+	"bufio"
 	"context"
-	"crypto/rand"
+	cryptoRand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,105 +19,230 @@ import (
 	"github.com/nexcompute/controlled-agent/internal/filetransfer"
 )
 
-// handleImageCommit 容器 commit 为镜像并导出 tar（任务 9.2、9.3）
-// platform-refinements 6.5：接收 project/note/ownerWorkerId，tar 命名 工号-项目-镜像名-标签-备注-随机串，
-// 使用管理端下发的 transferId（编码 imageId），回传完成才返回成功。
+// handleImageCommit 容器 commit 为镜像并推送私有仓库（任务 9.2；registry-image-distribution D4）。
+// 流程：docker commit（本地 ref=repo:tag）-> docker tag {registryUrl}/repo:tag -> docker push（重试 ≤3）。
+// repo 名由管理端按下发规则拼好（工号-项目-镜像名-标签-备注-随机串，sanitize 为合法 docker repo），tag 固定 latest。
+// 不再 docker save + file-transfer 回传 tar；push 全部完成才返回成功。
 func (e *Executor) handleImageCommit(cmd *Command) (string, error) {
 	if e.docker == nil {
 		return "", fmt.Errorf("Docker 管理器未初始化")
 	}
 
 	containerID, _ := cmd.Payload["containerId"].(string)
-	imageName, _ := cmd.Payload["imageName"].(string)
-	imageTag, _ := cmd.Payload["imageTag"].(string)
-	if imageTag == "" {
-		imageTag = "latest"
+	repo, _ := cmd.Payload["repoName"].(string)
+	tag, _ := cmd.Payload["tag"].(string)
+	registryURL, _ := cmd.Payload["registryUrl"].(string)
+	if tag == "" {
+		tag = "latest"
 	}
-	if containerID == "" || imageName == "" {
-		return "", fmt.Errorf("containerId 或 imageName 为空")
+	if containerID == "" || repo == "" || registryURL == "" {
+		return "", fmt.Errorf("containerId/repoName/registryUrl 为空")
 	}
-	project, _ := cmd.Payload["project"].(string)
-	note, _ := cmd.Payload["note"].(string)
-	ownerWorkerId, _ := cmd.Payload["ownerWorkerId"].(string)
-	transferID, _ := cmd.Payload["transferId"].(string)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute) // D4：push 大镜像
 	defer cancel()
 
-	// 1. docker commit
-	imageRef := imageName + ":" + imageTag
-	commitID, err := e.docker.CommitContainer(ctx, containerID, imageName, imageTag)
+	// 1. docker commit（本地 ref = repo:tag）
+	commitID, err := e.docker.CommitContainer(ctx, containerID, repo, tag)
 	if err != nil {
 		return "", fmt.Errorf("commit 失败: %w", err)
 	}
 	log.Printf("[image] commit 成功: %s -> %s", containerID, commitID)
 
-	// 2. docker save 导出 tar，文件命名 工号-项目-镜像名-标签-备注-随机串（各段 sanitize）
-	tarName := buildCommitTarName(ownerWorkerId, project, imageName, imageTag, note) + ".tar"
-	tarPath := filepath.Join(os.TempDir(), tarName)
-	if err := e.docker.SaveImage(ctx, imageRef, tarPath); err != nil {
-		return "", fmt.Errorf("save 失败: %w", err)
+	// 2. docker tag 指向私有仓库完整引用
+	localRef := repo + ":" + tag
+	registryRef := registryURL + "/" + localRef
+	if err := e.docker.TagImage(ctx, localRef, registryRef); err != nil {
+		return "", fmt.Errorf("tag 失败: %w", err)
 	}
-	log.Printf("[image] save 成功: %s", tarPath)
+	log.Printf("[image] tag 成功: %s -> %s", localRef, registryRef)
 
-	// 3. 上传 tar 至管理端（任务 9.3，复用 file-transfer）；transferId 由管理端下发（编码 imageId）
-	if transferID == "" {
-		transferID = fmt.Sprintf("img-%d", time.Now().UnixNano())
+	// 3. docker push（insecure HTTP 无认证；重试 ≤3，对齐 build.ps1 对 insecure registry EOF 重试经验）
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		lastErr = e.pushToCompletion(ctx, cmd.ID, registryRef)
+		if lastErr == nil {
+			break
+		}
+		log.Printf("[image] push 第 %d 次失败: %v", attempt, lastErr)
 	}
+	if lastErr != nil {
+		return "", fmt.Errorf("push 失败（已重试 3 次）: %w", lastErr)
+	}
+	log.Printf("[image] push 成功: %s", registryRef)
 
-	cfg := config.Get()
-	uploader := filetransfer.NewUploader(cfg.ServerURL, cfg.AgentToken, cfg.InstanceNumber, 0)
-	err = uploader.Upload(tarPath, transferID, "image", func(done, total int, doneBytes, totalBytes int64) {
-		log.Printf("[image] 上传进度: %d/%d 块 (%d/%d bytes)", done, total, doneBytes, totalBytes)
-	})
+	// 4. 查询镜像大小回传（管理端记录 sizeBytes）
+	sizeBytes, err := e.docker.ImageSize(ctx, registryRef)
 	if err != nil {
-		return "", fmt.Errorf("上传 tar 失败: %w", err)
+		log.Printf("[image] 查询镜像大小失败（忽略）: %v", err)
+		sizeBytes = 0
 	}
 
-	// 清理临时 tar
-	os.Remove(tarPath)
-
-	return fmt.Sprintf(`{"imageRef":"%s","transferId":"%s"}`, imageRef, transferID), nil
+	return fmt.Sprintf(`{"repo":%q,"tag":%q,"imageRef":%q,"sizeBytes":%d}`,
+		repo, tag, registryRef, sizeBytes), nil
 }
 
-// buildCommitTarName 生成 commit 镜像 tar 文件名（去扩展名）：工号-项目-镜像名-标签-备注-随机串。
-// 各段 sanitize：去路径分隔符与控制字符（保留中文与常规符号），空段以 x 占位避免连续分隔符。
-func buildCommitTarName(workerId, project, imageName, imageTag, note string) string {
-	random := randomHex(4)
-	return strings.Join([]string{
-		sanitizeSegment(workerId),
-		sanitizeSegment(project),
-		sanitizeSegment(imageName),
-		sanitizeSegment(imageTag),
-		sanitizeSegment(note),
-		random,
-	}, "-")
+// pushToCompletion 执行一次 push 并读进度流至 EOF（全部层推送完成才算成功）。
+// 流为 JSON 行（docker push progress），含 error 字段时视为失败。
+func (e *Executor) pushToCompletion(ctx context.Context, commandID, registryRef string) error {
+	reader, err := e.docker.PushImage(ctx, registryRef)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	return consumeImageProgress(reader, func(_ jsonStreamItem) {
+		// commit push 无实时进度消费方（管理端同步等待），仅丢弃行保持流读取
+	})
 }
 
-// sanitizeSegment 去除路径分隔符、冒号与控制字符，避免文件名非法或路径穿越。
-func sanitizeSegment(s string) string {
-	s = strings.TrimSpace(s)
-	var b strings.Builder
-	for _, r := range s {
-		if r == '/' || r == '\\' || r == ':' || r < 0x20 || r == 0x7f {
+// jsonStreamItem docker pull/push 进度流的一行（部分字段按需取用）。
+type jsonStreamItem struct {
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	ProgressDetail struct {
+		Current int64 `json:"current"`
+		Total   int64 `json:"total"`
+	} `json:"progressDetail"`
+	Error string `json:"error"`
+}
+
+// consumeImageProgress 逐行解析 docker 镜像进度流；出现 error 字段即失败返回。
+// onItem 回调用于 pull 场景的进度回传（push 场景传 noop）。
+func consumeImageProgress(reader io.Reader, onItem func(jsonStreamItem)) error {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			continue
 		}
-		b.WriteRune(r)
+		var item jsonStreamItem
+		if err := json.Unmarshal(line, &item); err != nil {
+			continue // 非 JSON 行（如空行）跳过
+		}
+		if item.Error != "" {
+			return fmt.Errorf("%s", item.Error)
+		}
+		if onItem != nil {
+			onItem(item)
+		}
 	}
-	out := b.String()
-	if out == "" {
-		out = "x"
-	}
-	return out
+	return scanner.Err()
 }
 
-// randomHex 生成 n 字节的随机十六进制串（避免重名）。
+// randomHex 生成 n 字节的随机十六进制串（env_syncer/upgrade 等复用）。
 func randomHex(n int) string {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := cryptoRand.Read(b); err != nil {
 		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// handleImagePull 从私有仓库拉取镜像（registry-image-distribution D5，命令 image.pull）。
+// 镜像已本地存在 -> already_exists；否则 docker pull 解析 JSON 进度流，
+// 节流回传 SendProgress（Stage=pulling、Percent 按各层字节估算、Text=层状态）。
+func (e *Executor) handleImagePull(cmd *Command) (string, error) {
+	if e.docker == nil {
+		return "", fmt.Errorf("Docker 管理器未初始化")
+	}
+
+	imageRef, _ := cmd.Payload["imageRef"].(string)
+	if imageRef == "" {
+		return "", fmt.Errorf("imageRef 为空")
+	}
+
+	// 已本地存在则跳过（与 image.load 行为一致）
+	checkCtx, checkCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer checkCancel()
+	if exists, _ := e.docker.ImageExists(checkCtx, imageRef); exists {
+		return "already_exists", nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	reader, err := e.docker.PullImage(ctx, imageRef)
+	if err != nil {
+		return "", friendlyPullError(err)
+	}
+	defer reader.Close()
+
+	// 逐层进度估算：各层 current/total 求和（无 total 的行不参与），节流 ≥200ms 或状态变化回传
+	type layerState struct {
+		current int64
+		total   int64
+		status  string
+	}
+	layers := make(map[string]*layerState)
+	lastSent := time.Now()
+
+	err = consumeImageProgress(reader, func(item jsonStreamItem) {
+		if item.ID == "" {
+			return
+		}
+		st, ok := layers[item.ID]
+		if !ok {
+			st = &layerState{}
+			layers[item.ID] = st
+		}
+		statusChanged := st.status != item.Status
+		st.status = item.Status
+		if item.ProgressDetail.Total > 0 {
+			st.current = item.ProgressDetail.Current
+			st.total = item.ProgressDetail.Total
+		}
+		// 节流：≥200ms 或状态变化（如 Downloading -> Extracting/Pull complete）才回传
+		if !statusChanged && time.Since(lastSent) < 200*time.Millisecond {
+			return
+		}
+		lastSent = time.Now()
+
+		var done, total int64
+		for _, l := range layers {
+			if l.total > 0 {
+				done += l.current
+				total += l.total
+			}
+		}
+		percent := 0
+		if total > 0 {
+			percent = int(done * 100 / total)
+		}
+		e.sendProgressText(cmd.ID, StagePulling, percent, formatLayerText(item))
+	})
+	if err != nil {
+		return "", friendlyPullError(err)
+	}
+	log.Printf("[image] pull 成功: %s", imageRef)
+	return "pulled", nil
+}
+
+// formatLayerText 拼分层文本（如 "a1b2c3: Downloading 45%" / "a1b2c3: Pull complete"）。
+func formatLayerText(item jsonStreamItem) string {
+	if item.ID == "" {
+		return item.Status
+	}
+	if item.ProgressDetail.Total > 0 {
+		pct := item.ProgressDetail.Current * 100 / item.ProgressDetail.Total
+		return fmt.Sprintf("%s: %s %d%%", item.ID, item.Status, pct)
+	}
+	return fmt.Sprintf("%s: %s", item.ID, item.Status)
+}
+
+// friendlyPullError 对典型 daemon 未配 insecure-registries 的 HTTPS/HTTP 类错误给出中文提示（D5）。
+func friendlyPullError(err error) error {
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "server gave http response to https client"),
+		strings.Contains(lower, "http: server gave http response to https client"):
+		return fmt.Errorf("拉取失败: 仓库为 HTTP 但 Docker 以 HTTPS 访问，需在 Docker daemon 配置 insecure-registries 后重启 Docker（详见环境准备-配置私有镜像仓库）: %w", err)
+	case strings.Contains(lower, "x509"), strings.Contains(lower, "tls"):
+		return fmt.Errorf("拉取失败: TLS 证书校验失败，需在 Docker daemon 配置 insecure-registries 后重启 Docker: %w", err)
+	default:
+		return fmt.Errorf("pull 镜像失败: %w", err)
+	}
 }
 
 // handleImageLoad 下载 tar 并 docker load（任务 9.6）

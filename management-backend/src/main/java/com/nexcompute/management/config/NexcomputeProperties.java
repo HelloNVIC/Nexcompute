@@ -20,6 +20,18 @@ public class NexcomputeProperties {
     private Storage storage = new Storage();
     private Email email = new Email();
     private Cors cors = new Cors();
+    private Registry registry = new Registry();
+
+    /**
+     * registry-image-distribution D1：内网私有镜像仓库。
+     * push/pull 与 Registry v2 API 检查同端口同服务，单 url 配置项：
+     * docker 引用前缀 = {url}/{name}:{tag}，v2 API 基址 = http://{url}/v2/...
+     */
+    @Data
+    public static class Registry {
+        /** 私有镜像仓库地址（host:port，如 10.13.66.25:5000），不带协议前缀 */
+        private String url = "10.13.66.25:5000";
+    }
 
     @Data
     public static class Jwt {

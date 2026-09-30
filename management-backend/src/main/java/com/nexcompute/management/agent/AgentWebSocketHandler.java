@@ -24,6 +24,7 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
     private final AgentSessionRegistry registry;
     private final ObjectMapper objectMapper;
     private final OtaProgressTracker otaProgressTracker;
+    private final ProgressRouter progressRouter;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -41,11 +42,11 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
         try {
             String payload = message.getPayload();
             // D2：先判是否 progress 消息（type=="progress"），progress 只更新进度不 complete future
+            // registry-image-distribution D6：progress 经 ProgressRouter 按 commandId 分发（OTA/镜像拉取等）
             if (payload.contains("\"progress\"")) {
                 ProgressMessage pm = objectMapper.readValue(payload, ProgressMessage.class);
                 if ("progress".equals(pm.getType()) && pm.getCommandId() != null) {
-                    int pct = pm.getPercent() == null ? 0 : pm.getPercent();
-                    otaProgressTracker.onProgress(pm.getCommandId(), pm.getStage(), pct);
+                    progressRouter.dispatch(pm.getCommandId(), pm.getStage(), pm.getPercent(), pm.getText());
                     return;
                 }
             }

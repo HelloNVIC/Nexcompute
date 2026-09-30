@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/nexcompute/controlled-agent/internal/docker"
 	"github.com/nexcompute/controlled-agent/internal/executil"
 )
 
@@ -38,7 +39,14 @@ sudo dpkg -i nvidia-container-toolkit_1.19.1-1_amd64.deb`
 const nvidiaToolkitVerifyCommands = `nvidia-ctk --version
 sudo nvidia-ctk runtime configure --runtime=docker`
 
-// buildEnvPrepCard 构建"受控端环境准备" Card，含环境网盘同步 + 8 个分步按钮（D2）。
+// insecureRegistriesSnippet 私有镜像仓库追加片段（registry-image-distribution D9）。
+// 含前导逗号：Docker Engine 既有 JSON 通常已有末项，直接追加粘贴即合法；
+// 若配置为空对象 {}，需去掉前导逗号（见 hint 说明）。
+// 仓库地址为部署固定内网地址，与 Toolkit 包名等 envprep 常量同策略硬编码；
+// 若后端 nexcompute.registry.url 改配，需同步此常量。
+const insecureRegistriesSnippet = `,"insecure-registries": ["10.13.66.25:5000"]`
+
+// buildEnvPrepCard 构建"受控端环境准备" Card，含环境网盘同步 + 9 个分步按钮（D2；D9 增 9）。
 func (a *App) buildEnvPrepCard() fyne.CanvasObject {
 	return container.NewVBox(
 		widget.NewButton("环境网盘同步", a.onEnvSync),
@@ -50,6 +58,7 @@ func (a *App) buildEnvPrepCard() fyne.CanvasObject {
 		widget.NewButton("6. 修改 Docker Engine 配置", a.onConfigureDockerEngine),
 		widget.NewButton("7. 创建 GPU 容器并启动 Jupyter", a.runCreateGpuContainer),
 		widget.NewButton("8. 环境测试", a.runEnvTest),
+		widget.NewButton("9. 配置私有镜像仓库", a.onConfigureInsecureRegistry),
 	)
 }
 
@@ -117,9 +126,10 @@ func (a *App) onVerifyToolkitGuide() {
 	a.showGuideDialog("验证 Toolkit 并配置运行时", nvidiaToolkitVerifyCommands, hint)
 }
 
-// 6. 修改 Docker Engine 配置（D6）：先启动 Docker Desktop（多路径探测），再弹引导框。
+// 6. 修改 Docker Engine 配置（D6）：先启动 Docker Desktop，再弹引导框。
+// 启动逻辑复用 docker.StartDockerDesktop（与受控端看门狗共用）。
 func (a *App) onConfigureDockerEngine() {
-	if err := startDockerDesktop(); err != nil {
+	if err := docker.StartDockerDesktop(); err != nil {
 		dialog.ShowInformation("未自动启动 Docker Desktop",
 			"未能自动启动 Docker Desktop（"+err.Error()+"）。\n请手动打开 Docker Desktop 后再按指引修改配置。", a.window)
 	} else {
@@ -161,6 +171,15 @@ docker exec pytorch-26.06 python -c $py
 `)
 }
 
+// 9. 配置私有镜像仓库（D9）：弹引导框展示 daemon.json / Docker Engine 需追加的
+// insecure-registries 片段（含前导逗号），一键复制后粘贴到既有 JSON 末项之后。
+func (a *App) onConfigureInsecureRegistry() {
+	hint := "打开 Docker Desktop > Settings > Docker Engine（或编辑 daemon.json），" +
+		"把以下内容追加粘贴到既有 JSON 最后一项之后（前导逗号用于与上一项分隔），点 Apply & Restart。\n" +
+		"若当前配置为空对象 {}（无任何配置项），请去掉开头的前导逗号再粘贴。"
+	a.showGuideDialog("配置私有镜像仓库", insecureRegistriesSnippet, hint)
+}
+
 // showGuideDialog 弹出独立引导窗口（D5/D6），比 dialog 大且可调整。
 // 展示提示文案 + 代码块（可滚动）+ 一键复制按钮；复制成功后按钮文案变更为"已复制 ✓"。
 func (a *App) showGuideDialog(title, codeBlock, hint string) {
@@ -198,32 +217,4 @@ func (a *App) showGuideDialog(title, codeBlock, hint string) {
 // envDir 受控端本地 Env 文件夹（存储池根目录下 Env 子目录，D4）。
 func (a *App) envDir() string {
 	return a.cfg.EnvDir()
-}
-
-// startDockerDesktop 多路径探测并启动 Docker Desktop（D6）。
-func startDockerDesktop() error {
-	candidates := []string{
-		`C:\Program Files\Docker\Docker\Docker Desktop.exe`,
-	}
-	if pf := os.Getenv("ProgramFiles"); pf != "" {
-		candidates = append(candidates, filepath.Join(pf, "Docker", "Docker", "Docker Desktop.exe"))
-	}
-	if pf86 := os.Getenv("ProgramFiles(x86)"); pf86 != "" {
-		candidates = append(candidates, filepath.Join(pf86, "Docker", "Docker", "Docker Desktop.exe"))
-	}
-	var lastErr error
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err != nil {
-			continue
-		}
-		if err := executil.StartDetached(p); err != nil {
-			lastErr = err
-			continue
-		}
-		return nil
-	}
-	if lastErr != nil {
-		return lastErr
-	}
-	return fmt.Errorf("未在常见路径找到 Docker Desktop.exe")
 }

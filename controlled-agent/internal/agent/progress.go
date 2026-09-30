@@ -3,12 +3,15 @@
 // 复用 commandId 关联 pending request，管理端 channel 识别后只更新进度不 complete future。
 package agent
 
-// ProgressMessage 升级进度消息（type=="progress"）。
+// ProgressMessage 进度消息（type=="progress"）。
+// registry-image-distribution D5：新增 Text（分层文本，image.pull 用，如 "a1b2c3: Downloading 45%"）；
+// OTA 不使用该字段，可缺省。
 type ProgressMessage struct {
 	Type      string `json:"type"`      // 固定 "progress"
 	CommandID string `json:"commandId"` // 关联原命令
-	Stage     string `json:"stage"`     // downloading/verifying/backing_up/replacing/waiting
+	Stage     string `json:"stage"`     // downloading/verifying/backing_up/replacing/waiting/pulling
 	Percent   int    `json:"percent"`   // 0-100
+	Text      string `json:"text,omitempty"` // 分层状态文本（可空，image.pull 新增）
 	Timestamp int64  `json:"timestamp"`
 }
 
@@ -30,4 +33,6 @@ const (
 	StageBackingUp   = "backing_up"
 	StageReplacing   = "replacing"
 	StageWaiting     = "waiting"
+	// StagePulling 镜像拉取（registry-image-distribution D5：image.pull 进度段）
+	StagePulling = "pulling"
 )

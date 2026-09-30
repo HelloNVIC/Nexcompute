@@ -70,10 +70,30 @@ async function loadTasksSilent(): Promise<void> {
 
 async function loadInstances(): Promise<void> {
   instances.value = await instanceApi.list()
+  pruneOfflineSelection()
 }
 
 async function loadInstancesSilent(): Promise<void> {
   instances.value = await instanceApi.list()
+  pruneOfflineSelection()
+}
+
+// 离线实例不可升级：剔除已勾选中转为离线的实例（5s 静默刷新期间状态可能变化）
+function pruneOfflineSelection(): void {
+  const online = new Set(instances.value.filter((i) => i.status === 'ONLINE').map((i) => i.id))
+  selectedInstanceIds.value = selectedInstanceIds.value.filter((id) => online.has(id))
+}
+
+// 语义化版本比较（按 . 分段数值比，缺失段按 0；空/非数字段不炸）
+function compareVersions(a?: string, b?: string): number {
+  const pa = (a || '').split('.').map((n) => parseInt(n, 10) || 0)
+  const pb = (b || '').split('.').map((n) => parseInt(n, 10) || 0)
+  const len = Math.max(pa.length, pb.length)
+  for (let i = 0; i < len; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d !== 0) return d
+  }
+  return 0
 }
 
 async function handleUpload(file: File): Promise<boolean> {
@@ -221,12 +241,16 @@ function fmtSize(bytes: number): string {
         :loading="instances.length === 0"
         row-key="id"
         :pagination="false"
-        :row-selection="{ selectedRowKeys: selectedInstanceIds, onChange: (keys: number[]) => (selectedInstanceIds = keys) }"
+        :row-selection="{
+          selectedRowKeys: selectedInstanceIds,
+          onChange: (keys: number[]) => (selectedInstanceIds = keys),
+          getCheckboxProps: (record: PhysicalInstance) => ({ disabled: record.status !== 'ONLINE' }),
+        }"
         size="small"
       >
         <a-table-column title="编号" data-index="instanceNumber" :width="80" />
         <a-table-column title="机器名" data-index="machineName" />
-        <a-table-column title="当前版本" :width="120">
+        <a-table-column title="当前版本" :width="140" :sorter="(a: PhysicalInstance, b: PhysicalInstance) => compareVersions(a.agentVersion, b.agentVersion)">
           <template #default="{ record }">{{ record.agentVersion || '-' }}</template>
         </a-table-column>
         <a-table-column title="状态" :width="90">

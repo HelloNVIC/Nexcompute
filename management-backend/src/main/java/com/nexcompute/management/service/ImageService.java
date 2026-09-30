@@ -8,6 +8,7 @@ import com.nexcompute.management.common.ErrorCode;
 import com.nexcompute.management.config.NexcomputeProperties;
 import com.nexcompute.management.domain.*;
 import com.nexcompute.management.filetransfer.ImageTransferEvent;
+import com.nexcompute.management.registry.RegistryClient;
 import com.nexcompute.management.repository.*;
 import com.nexcompute.management.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
@@ -38,12 +39,17 @@ public class ImageService {
     public static final String VIS_SHARED_TO_ALL = "SHARED_TO_ALL"; // 全用户可见（管理员上传/公共镜像库）
     public static final String VIS_SHARED = "SHARED";            // 已显式共享给个别用户/课题组
 
+    /** 镜像分发方式（registry-image-distribution V35）：TAR=管理端 tar 分发（存量）；REGISTRY=私有仓库 pull 分发。 */
+    public static final String DISTRIBUTION_TAR = "TAR";
+    public static final String DISTRIBUTION_REGISTRY = "REGISTRY";
+
     private final ImageMetadataRepository imageRepository;
     private final ImageShareRepository shareRepository;
     private final UserRepository userRepository;
     private final NexcomputeProperties properties;
     private final ObjectMapper objectMapper;
     private final EmailService emailService;
+    private final RegistryClient registryClient;
 
     /** 暴露配置供 Controller 使用（tar 存储路径） */
     public NexcomputeProperties getProperties() {
@@ -93,6 +99,8 @@ public class ImageService {
      * 容器创建时 imageRef 必须命中管理端已配置镜像，拒绝自由文本。
      * 返回匹配的镜像元数据（含 tarPath/appPorts 供分发与端口预填）。
      * platform-refinements 6.4：仅 READY 镜像可用于创建容器（回传未完成不可用）。
+     * registry-image-distribution 3.3：REGISTRY 镜像额外要求 registry_valid=true
+     * （未推送/已从仓库移除的无效镜像不可选）；TAR 镜像维持仅 READY。
      */
     public ImageMetadata resolveVisibleImage(String imageRef) {
         if (imageRef == null || imageRef.isBlank()) {
@@ -101,6 +109,8 @@ public class ImageService {
         return listVisible().stream()
                 .filter(img -> imageRef.equals(img.getRef()))
                 .filter(img -> "READY".equals(img.getStatus()))
+                .filter(img -> !DISTRIBUTION_REGISTRY.equals(img.getDistribution())
+                        || Boolean.TRUE.equals(img.getRegistryValid()))
                 .findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.IMAGE_REF_NOT_ALLOWED,
                         "镜像不在可选范围或未就绪：" + imageRef));
@@ -135,15 +145,20 @@ public class ImageService {
 
     /**
      * 容器 commit 镜像元数据注册（platform-refinements 6.3）。
-     * 含 project/note/sourceWorkerId/usageInstructions/tarPath，状态先为 UPLOADING，回传完成置 READY。
+     * 含 project/note/sourceWorkerId/usageInstructions，状态先为 UPLOADING，持久化确认后置 READY。
+     * registry-image-distribution D4：commit 镜像改推仓库，distribution=REGISTRY 时
+     * name=完整 repo 名（工号-项目-镜像名-标签-备注-随机串）、tag=latest、不落 tarPath；
+     * 命令成功由 {@link #markRegistryImagePushed} 置 READY+registry_valid=true。
      */
     @Transactional
     public ImageMetadata registerCommitImage(String name, String tag, Long ownerId, String sourceContainer,
                                              String project, String note, String sourceWorkerId,
-                                             Long sizeBytes, String checksum, String tarPath, String mountPoint) {
+                                             Long sizeBytes, String checksum, String tarPath, String mountPoint,
+                                             String distribution) {
         User owner = userRepository.findById(ownerId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
+        boolean registry = DISTRIBUTION_REGISTRY.equals(distribution);
         ImageMetadata image = ImageMetadata.builder()
                 .name(name)
                 .tag(tag != null ? tag : "latest")
@@ -151,8 +166,8 @@ public class ImageService {
                 .ownerName(owner.getRealName())
                 .groupId(owner.getGroupId())
                 .sizeBytes(sizeBytes)
-                .tarPath(tarPath != null ? tarPath
-                        : properties.getStorage().getImageTarDir() + "/" + ownerId + "/" + name + "-" + tag + ".tar")
+                .tarPath(registry ? null : (tarPath != null ? tarPath
+                        : properties.getStorage().getImageTarDir() + "/" + ownerId + "/" + name + "-" + tag + ".tar"))
                 .isPublic(false)
                 .sourceContainer(sourceContainer)
                 .project(project)
@@ -161,9 +176,197 @@ public class ImageService {
                 .mountPoint(mountPoint)
                 .checksum(checksum)
                 .status("UPLOADING")
+                .distribution(registry ? DISTRIBUTION_REGISTRY : DISTRIBUTION_TAR)
                 .visibility(VIS_PRIVATE)
                 .build();
         return imageRepository.save(image);
+    }
+
+    /** commit push 确认成功（D4）：READY + registry_valid=true（受控端已确认 push 全部完成）。 */
+    @Transactional
+    public ImageMetadata markRegistryImagePushed(Long imageId) {
+        ImageMetadata image = getImage(imageId);
+        image.setStatus("READY");
+        image.setRegistryValid(true);
+        image.setRegistryCheckedAt(Instant.now());
+        ImageMetadata saved = imageRepository.save(image);
+        log.info("[Image] commit 镜像已推送仓库: {}:{}", image.getName(), image.getTag());
+        return saved;
+    }
+
+    /** 更新镜像大小（D4：commit push 成功后受控端回传 sizeBytes 落盘）。 */
+    @Transactional
+    public ImageMetadata updateSizeBytes(Long imageId, Long sizeBytes) {
+        ImageMetadata image = getImage(imageId);
+        image.setSizeBytes(sizeBytes);
+        return imageRepository.save(image);
+    }
+
+    // ===== registry-image-distribution：私有仓库镜像登记 / 有效性 / 推送命令 / 无标记镜像 =====
+
+    /**
+     * 登记私有仓库镜像（无文件，D3）：原始镜像名:原始标签，status=UPLOADING、distribution=REGISTRY。
+     * 用户经操作列"上传"弹窗的 tag/push 命令自行推送，推送后"刷新状态"确认有效。
+     * 重名校验：任何既有记录 name:tag 相同即拒绝（含 TAR 类，避免 resolveVisibleImage 引用歧义）。
+     */
+    @Audited(action = "IMAGE_REGISTER", targetType = "IMAGE", targetIdExpr = "#result.id")
+    @Transactional
+    public ImageMetadata registerRegistryImage(String name, String tag, List<Integer> appPorts,
+                                               String mountPoint, String usageInstructions) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        User owner = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+
+        String finalName = name == null ? "" : name.trim();
+        String finalTag = (tag == null || tag.isBlank()) ? "latest" : tag.trim();
+        if (finalName.isEmpty()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "原始镜像名不能为空");
+        }
+        // docker repo 名规则：小写字母/数字/./_/-/，可含 / 分段；大写会在 docker tag 时被拒
+        if (!finalName.matches("[a-z0-9]+((\\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\\.|_|__|-+)[a-z0-9]+)*)*")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "原始镜像名仅允许小写字母/数字/./_/-/ 与路径分段");
+        }
+        if (!finalTag.matches("[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "原始标签格式非法（字母数字开头，可含 ._-）");
+        }
+        if (imageRepository.existsByNameAndTag(finalName, finalTag)) {
+            throw new BusinessException(ErrorCode.IMAGE_ALREADY_EXISTS,
+                    "已存在同名镜像记录：" + finalName + ":" + finalTag);
+        }
+
+        ImageMetadata image = ImageMetadata.builder()
+                .name(finalName)
+                .tag(finalTag)
+                .ownerId(userId)
+                .ownerName(owner.getRealName())
+                .groupId(owner.getGroupId())
+                .isPublic(false)
+                .sourceContainer("registry-register")
+                .status("UPLOADING")
+                .distribution(DISTRIBUTION_REGISTRY)
+                .appPorts(dedupePorts(appPorts))
+                .usageInstructions(usageInstructions)
+                .mountPoint(normalizeMountPoint(mountPoint))
+                .visibility(owner.getRole() == UserRole.ADMIN ? VIS_SHARED_TO_ALL : VIS_PRIVATE)
+                .build();
+        ImageMetadata saved = imageRepository.save(image);
+        log.info("[Image] 仓库镜像登记: {}:{} (待用户推送)", finalName, finalTag);
+        return saved;
+    }
+
+    /**
+     * 有效性刷新（D3）：经 Registry v2 API HEAD manifest 检查是否已推送。
+     * exists=true 且原 UPLOADING -> READY；false 仅更新结论不动状态（UPLOADING/READY 均可能，均不可用于创建容器）。
+     * 仓库不可达：RegistryClient 抛 BusinessException，本方法不捕获 -> 不改变原结论，不误标无效。
+     */
+    @Transactional
+    public ImageMetadata refreshValidity(Long imageId) {
+        ImageMetadata image = getImage(imageId);
+        boolean exists = registryClient.exists(image.getName(), image.getTag());
+        image.setRegistryValid(exists);
+        image.setRegistryCheckedAt(Instant.now());
+        if (exists && "UPLOADING".equals(image.getStatus())) {
+            image.setStatus("READY");
+        }
+        ImageMetadata saved = imageRepository.save(image);
+        log.info("[Image] 仓库有效性刷新: {}:{} -> {}", image.getName(), image.getTag(), exists);
+        return saved;
+    }
+
+    /** 推送命令（操作列"上传"弹窗数据，D3）：命令由后端拼装，前端不硬编码仓库地址。 */
+    public PushCommands getPushCommands(Long imageId) {
+        ImageMetadata image = getImage(imageId);
+        String src = image.getName() + ":" + image.getTag();
+        String dst = registryClient.getRegistryUrl() + "/" + src;
+        return new PushCommands(registryClient.getRegistryUrl(),
+                "docker tag " + src + " " + dst,
+                "docker push " + dst);
+    }
+
+    public record PushCommands(String registryUrl, String tagCmd, String pushCmd) {}
+
+    /**
+     * 无标记镜像（D3，仅管理员）：仓库中存在（catalog×tags）但系统内无 name:tag 记录的镜像。
+     */
+    public List<UntaggedImage> listUntaggedRegistryImages() {
+        requireAdmin();
+        Set<String> known = imageRepository.findAll().stream()
+                .map(ImageMetadata::getRef)
+                .collect(java.util.stream.Collectors.toSet());
+        List<UntaggedImage> result = new ArrayList<>();
+        for (String repo : registryClient.catalog()) {
+            List<String> untagged = registryClient.tags(repo).stream()
+                    .filter(t -> !known.contains(repo + ":" + t))
+                    .toList();
+            if (!untagged.isEmpty()) {
+                result.add(new UntaggedImage(repo, untagged));
+            }
+        }
+        return result;
+    }
+
+    public record UntaggedImage(String repo, List<String> tags) {}
+
+    /**
+     * 无标记镜像补录（D3，仅管理员）：以仓库 repo 名为镜像名建记录，READY + registry_valid=true，
+     * sourceContainer=registry-claim，visibility 默认 SHARED_TO_ALL。
+     */
+    @Audited(action = "IMAGE_CLAIM_REGISTRY", targetType = "IMAGE", targetIdExpr = "#result.id")
+    @Transactional
+    public ImageMetadata claimUntaggedRegistryImage(String repo, String tag, List<Integer> appPorts,
+                                                    String mountPoint, String usageInstructions, String visibility) {
+        requireAdmin();
+        if (repo == null || repo.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "镜像名(repo)不能为空");
+        }
+        String finalTag = (tag == null || tag.isBlank()) ? "latest" : tag.trim();
+        String finalName = repo.trim();
+        if (imageRepository.existsByNameAndTag(finalName, finalTag)) {
+            throw new BusinessException(ErrorCode.IMAGE_ALREADY_EXISTS,
+                    "已存在同名镜像记录：" + finalName + ":" + finalTag);
+        }
+        String finalVisibility = (visibility == null || visibility.isBlank())
+                ? VIS_SHARED_TO_ALL : visibility;
+        if (!VIS_SHARED_TO_ALL.equals(finalVisibility) && !VIS_PRIVATE.equals(finalVisibility)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "不支持的可见性: " + finalVisibility);
+        }
+        Long userId = SecurityUtils.getCurrentUserId();
+        User owner = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        ImageMetadata image = ImageMetadata.builder()
+                .name(finalName)
+                .tag(finalTag)
+                .ownerId(userId)
+                .ownerName(owner.getRealName())
+                .groupId(owner.getGroupId())
+                .isPublic(false)
+                .sourceContainer("registry-claim")
+                .status("READY")
+                .distribution(DISTRIBUTION_REGISTRY)
+                .registryValid(true)
+                .registryCheckedAt(Instant.now())
+                .appPorts(dedupePorts(appPorts))
+                .usageInstructions(usageInstructions)
+                .mountPoint(normalizeMountPoint(mountPoint))
+                .visibility(finalVisibility)
+                .build();
+        ImageMetadata saved = imageRepository.save(image);
+        log.info("[Image] 无标记镜像补录: {}:{} visibility={}", finalName, finalTag, finalVisibility);
+        return saved;
+    }
+
+    /** 仅管理员可操作（无标记镜像相关）。 */
+    private void requireAdmin() {
+        if (SecurityUtils.getCurrentRole() != UserRole.ADMIN) {
+            throw new BusinessException(ErrorCode.PERMISSION_DENIED, "仅管理员可操作");
+        }
+    }
+
+    /** 应用端口校验 + 按首现顺序去重（登记/补录复用 editMetadata 语义）。 */
+    private List<Integer> dedupePorts(List<Integer> appPorts) {
+        validatePorts(appPorts);
+        if (appPorts == null || appPorts.isEmpty()) return null;
+        return new ArrayList<>(new LinkedHashSet<>(appPorts));
     }
 
     /**

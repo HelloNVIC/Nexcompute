@@ -54,6 +54,11 @@ func (e *Executor) SetMessageSender(s MessageSender) {
 
 // sendProgress 回传进度消息（不替代最终 Result）
 func (e *Executor) sendProgress(commandID, stage string, percent int) {
+	e.sendProgressText(commandID, stage, percent, "")
+}
+
+// sendProgressText 回传带分层文本的进度（registry-image-distribution D5：image.pull 逐层状态）。
+func (e *Executor) sendProgressText(commandID, stage string, percent int, text string) {
 	if e.sender == nil {
 		return
 	}
@@ -64,7 +69,7 @@ func (e *Executor) sendProgress(commandID, stage string, percent int) {
 		percent = 100
 	}
 	e.sender.SendProgress(ProgressMessage{
-		Type: "progress", CommandID: commandID, Stage: stage, Percent: percent,
+		Type: "progress", CommandID: commandID, Stage: stage, Percent: percent, Text: text,
 		Timestamp: time.Now().UnixMilli(),
 	})
 }
@@ -175,11 +180,13 @@ func (e *Executor) dispatch(cmd *Command) (string, error) {
 	case "storage.migration_cleanup":
 		return e.handleStorageMigrationCleanup(cmd)
 
-	// 镜像（任务 9.2、9.6、9.8）
+	// 镜像（任务 9.2、9.6、9.8；registry-image-distribution D4/D5）
 	case "image.commit":
 		return e.handleImageCommit(cmd)
 	case "image.load":
 		return e.handleImageLoad(cmd)
+	case "image.pull":
+		return e.handleImagePull(cmd)
 	case "image.sync_public":
 		return e.handleImageSyncPublic(cmd)
 

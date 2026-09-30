@@ -96,6 +96,22 @@ public class ImageMetadata {
     @Column(nullable = false, length = 20)
     private String visibility;
 
+    /** 分发方式（V35）：TAR=管理端 tar 分发（存量）；REGISTRY=私有仓库 pull 分发。@Builder.Default 兼容存量构建点。 */
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private String distribution = "TAR";
+
+    /**
+     * 仓库有效性（V35）：null=未检查（TAR 镜像恒 null），true/false 为经 Registry v2 API 检查的结论。
+     * REGISTRY 镜像须 READY 且 registry_valid=true 才可用于创建容器。
+     */
+    @Column(name = "registry_valid")
+    private Boolean registryValid;
+
+    /** 最近一次仓库有效性检查时间（V35）。 */
+    @Column(name = "registry_checked_at")
+    private Instant registryCheckedAt;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private Instant createdAt;

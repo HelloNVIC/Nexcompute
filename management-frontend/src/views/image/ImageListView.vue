@@ -2,31 +2,36 @@
 import { onMounted, reactive, ref, computed } from 'vue'
 import { Modal, message } from 'ant-design-vue'
 import dayjs from 'dayjs'
-import { imageApi, type ImageMetadata } from '@/api/image'
+import { imageApi, type ImageMetadata, type PushCommands, type UntaggedImage } from '@/api/image'
 import { groupApi, type ResearchGroup } from '@/api/group'
+import { copyToClipboard } from '@/utils/clipboard'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 // platform-refinements：管理员视角为"权限"管理，普通用户为"共享"自己的镜像
 const shareLabel = computed(() => (auth.role === 'ADMIN' ? '权限' : '共享'))
+// registry-image-distribution：无标记镜像入口仅管理员
+const isAdmin = computed(() => auth.role === 'ADMIN')
 
 const loading = ref(false)
 const images = ref<ImageMetadata[]>([])
+// 主 tab：list=镜像列表 / untagged=无标记镜像（仅管理员）
+const activeTab = ref('list')
 
-// 上传 tar 弹窗
-const uploadVisible = ref(false)
+// 登记镜像弹窗（registry-image-distribution D3：纯元数据，无文件上传）
+const registerVisible = ref(false)
 const submitting = ref(false)
-const parsing = ref(false)
-
-const tarForm = reactive({
+const registerForm = reactive({
   name: '',
   tag: 'latest',
-  file: null as File | null,
   appPorts: [] as number[],
   usageInstructions: '',
   mountPoint: '',
 })
-const fileList = ref<{ uid: string; name: string; status: string; originFileObj: File }[]>([])
+
+// 上传命令弹窗（D3：tag/push 命令由后端拼装，一键复制）
+const pushCmdVisible = ref(false)
+const pushCmds = ref<PushCommands | null>(null)
 
 // 共享弹窗（platform-refinements 6.8：按工号 / 共享给课题组）
 const shareVisible = ref(false)
@@ -49,6 +54,20 @@ const editForm = reactive({
   appPorts: [] as number[],
   usageInstructions: '',
   mountPoint: '',
+})
+
+// 无标记镜像（registry-image-distribution D3，仅管理员）
+const untaggedLoading = ref(false)
+const untagged = ref<UntaggedImage[]>([])
+const claimVisible = ref(false)
+const claimSubmitting = ref(false)
+const claimForm = reactive({
+  repo: '',
+  tag: 'latest',
+  appPorts: [] as number[],
+  usageInstructions: '',
+  mountPoint: '',
+  visibility: 'SHARED_TO_ALL' as 'SHARED_TO_ALL' | 'PRIVATE',
 })
 
 function openEdit(image: ImageMetadata): void {
@@ -95,48 +114,17 @@ async function load(): Promise<void> {
   }
 }
 
-function showUpload(): void {
-  uploadVisible.value = true
-  resetTarForm()
+function showRegister(): void {
+  registerForm.name = ''
+  registerForm.tag = 'latest'
+  registerForm.appPorts = []
+  registerForm.usageInstructions = ''
+  registerForm.mountPoint = ''
+  registerVisible.value = true
 }
 
-function resetTarForm(): void {
-  tarForm.name = ''
-  tarForm.tag = 'latest'
-  tarForm.file = null
-  tarForm.appPorts = []
-  tarForm.usageInstructions = ''
-  tarForm.mountPoint = ''
-  fileList.value = []
-}
-
-// 选定 tar 即时解析回填（platform-refinements 4.3）：调用 parse-tar 回填 name/tag/appPorts
-async function handleBeforeUpload(file: File): Promise<boolean> {
-  tarForm.file = file
-  fileList.value = [{ uid: String(Date.now()), name: file.name, status: 'done', originFileObj: file }]
-  parsing.value = true
-  try {
-    const parsed = await imageApi.parseTar(file)
-    if (parsed.name) tarForm.name = parsed.name
-    if (parsed.tag) tarForm.tag = parsed.tag
-    if (parsed.appPorts?.length) tarForm.appPorts = parsed.appPorts
-    message.success('已解析 tar 并回填')
-  } catch {
-    // 拦截器已提示；用户可手动填写
-  } finally {
-    parsing.value = false
-  }
-  return false
-}
-
-function handleRemoveFile(): boolean {
-  tarForm.file = null
-  fileList.value = []
-  return true
-}
-
-function appPortChange(ports: (string | number)[]): void {
-  tarForm.appPorts = dedupePorts(ports)
+function registerPortChange(ports: (string | number)[]): void {
+  registerForm.appPorts = dedupePorts(ports)
 }
 
 // 应用端口去重 + 校验（单个镜像同一端口只保留一个；端口须为 1-65535 整数）
@@ -161,32 +149,118 @@ function dedupePorts(ports: (string | number)[]): number[] {
   return result
 }
 
-async function handleSubmit(): Promise<void> {
-  if (!tarForm.file) {
-    message.warning('请选择 tar 文件')
-    return
-  }
-  if (!tarForm.name) {
-    message.warning('未能从 tar 解析出镜像名，请确认 tar 由 docker save 生成且含 RepoTags')
+// 登记私有仓库镜像（D3）：创建记录（未推送），随后经"上传"弹窗命令自行推送
+async function handleRegister(): Promise<void> {
+  if (!registerForm.name.trim()) {
+    message.warning('请填写原始镜像名')
     return
   }
   submitting.value = true
   try {
-    const result = await imageApi.uploadTar(
-      tarForm.file,
-      tarForm.name,
-      tarForm.tag,
-      tarForm.appPorts.length ? tarForm.appPorts : undefined,
-      tarForm.usageInstructions || undefined,
-      tarForm.mountPoint || undefined,
-    )
-    message.success(`tar 镜像上传成功：${result.name}:${result.tag}`)
-    uploadVisible.value = false
+    const result = await imageApi.register({
+      name: registerForm.name.trim(),
+      tag: registerForm.tag.trim() || 'latest',
+      appPorts: registerForm.appPorts.length ? registerForm.appPorts : undefined,
+      usageInstructions: registerForm.usageInstructions || undefined,
+      mountPoint: registerForm.mountPoint || undefined,
+    })
+    message.success(`镜像登记成功：${result.name}:${result.tag}，请在本机执行推送命令后点击"刷新状态"`)
+    registerVisible.value = false
     load()
   } catch {
     // 拦截器已提示
   } finally {
     submitting.value = false
+  }
+}
+
+// 上传命令弹窗（D3）：数据来自 push-commands 接口，前端不硬编码仓库地址
+async function openPushCommands(image: ImageMetadata): Promise<void> {
+  pushCmds.value = await imageApi.pushCommands(image.id)
+  pushCmdVisible.value = true
+}
+
+async function copyText(text: string): Promise<void> {
+  const ok = await copyToClipboard(text)
+  if (ok) {
+    message.success('已复制到剪贴板')
+  } else {
+    message.error('复制失败，请手动选择复制')
+  }
+}
+
+// 刷新状态（D3）：即时重新检查仓库有效性并更新该行
+async function refreshValidity(image: ImageMetadata): Promise<void> {
+  try {
+    const updated = await imageApi.refreshValidity(image.id)
+    const target = images.value.find((i) => i.id === image.id)
+    if (target) {
+      target.registryValid = updated.registryValid
+      target.registryCheckedAt = updated.registryCheckedAt
+      target.status = updated.status
+    }
+    message.success(
+      updated.registryValid
+        ? `镜像已推送到仓库（有效）：${updated.name}:${updated.tag}`
+        : `仓库中未找到该镜像（无效）：${updated.name}:${updated.tag}`,
+    )
+  } catch {
+    // 拦截器已提示（仓库不可达时不改变原结论）
+  }
+}
+
+// ===== 无标记镜像（D3，仅管理员）=====
+
+async function loadUntagged(): Promise<void> {
+  untaggedLoading.value = true
+  try {
+    untagged.value = await imageApi.listUntagged()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    untaggedLoading.value = false
+  }
+}
+
+// 切到无标记镜像 tab 时加载
+function onTabChange(key: string): void {
+  if (key === 'untagged') loadUntagged()
+}
+
+function openClaim(item: UntaggedImage, tag: string): void {
+  claimForm.repo = item.repo
+  claimForm.tag = tag
+  claimForm.appPorts = []
+  claimForm.usageInstructions = ''
+  claimForm.mountPoint = ''
+  claimForm.visibility = 'SHARED_TO_ALL'
+  claimVisible.value = true
+}
+
+function claimPortChange(ports: (string | number)[]): void {
+  claimForm.appPorts = dedupePorts(ports)
+}
+
+// 补录（D3）：以仓库 repo 名为镜像名建记录（READY+有效），按可见性对用户可用
+async function handleClaim(): Promise<void> {
+  claimSubmitting.value = true
+  try {
+    const result = await imageApi.claimUntagged({
+      repo: claimForm.repo,
+      tag: claimForm.tag,
+      appPorts: claimForm.appPorts.length ? claimForm.appPorts : undefined,
+      usageInstructions: claimForm.usageInstructions || undefined,
+      mountPoint: claimForm.mountPoint || undefined,
+      visibility: claimForm.visibility,
+    })
+    message.success(`补录成功：${result.name}:${result.tag} 已可用于创建容器`)
+    claimVisible.value = false
+    load()
+    loadUntagged()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    claimSubmitting.value = false
   }
 }
 
@@ -241,10 +315,20 @@ function formatSize(bytes?: number): string {
   return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB'
 }
 
+// 有效性列文案（D3）：TAR 镜像显示"-"（不检查）
+function validityLabel(image: ImageMetadata): { text: string; color: string } {
+  if (image.distribution !== 'REGISTRY') return { text: '-', color: 'default' }
+  if (image.registryValid === true) return { text: '有效', color: 'green' }
+  if (image.registryValid === false) return { text: '无效', color: 'red' }
+  return { text: '未检查', color: 'orange' }
+}
+
 function confirmDelete(image: ImageMetadata): void {
   Modal.confirm({
     title: `确认删除镜像 ${image.name}:${image.tag}？`,
-    content: '删除后不可恢复',
+    content: image.distribution === 'REGISTRY'
+      ? '仅删除系统内记录，私有仓库中的镜像不受影响'
+      : '删除后不可恢复',
     onOk: async () => {
       await imageApi.delete(image.id)
       message.success('镜像已删除')
@@ -272,125 +356,199 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
   <div>
     <div style="display: flex; justify-content: space-between; margin-bottom: 16px">
       <a-typography-title :level="3" style="margin: 0">镜像管理</a-typography-title>
-      <a-button type="primary" @click="showUpload">上传 tar</a-button>
+      <a-button type="primary" @click="showRegister">登记镜像</a-button>
     </div>
 
-    <a-table :data-source="images" :loading="loading" row-key="id" :pagination="false">
-      <a-table-column title="镜像名" data-index="name" />
-      <a-table-column title="标签" data-index="tag" :width="100" />
-      <a-table-column title="归属" :width="120">
-        <template #default="{ record }">
-          <a-tag v-if="record.isPublic" color="purple">公共</a-tag>
-          <a-tag v-else-if="record.visibility === 'SHARED_TO_ALL'" color="geekblue">全员</a-tag>
-          <span v-else>{{ record.ownerName ?? '-' }}</span>
-        </template>
-      </a-table-column>
-      <a-table-column title="大小" :width="100">
-        <template #default="{ record }">{{ formatSize(record.sizeBytes) }}</template>
-      </a-table-column>
-      <a-table-column title="来源" :width="110">
-        <template #default="{ record }">
-          <a-tag v-if="record.sourceContainer === 'tar-upload'" color="cyan">tar上传</a-tag>
-          <a-tag v-else-if="record.sourceContainer === 'dockerfile-build'" color="blue">Dockerfile</a-tag>
-          <a-tag v-else-if="record.sourceContainer" color="green">commit</a-tag>
-          <span v-else>-</span>
-        </template>
-      </a-table-column>
-      <a-table-column title="应用端口" :width="160">
-        <template #default="{ record }">
-          <template v-if="record.appPorts && record.appPorts.length">
-            <a-tag v-for="p in record.appPorts" :key="p" color="blue">{{ p }}</a-tag>
-          </template>
-          <span v-else style="color: #ccc">-</span>
-        </template>
-      </a-table-column>
-      <a-table-column title="容器内挂载" :width="160">
-        <template #default="{ record }">
-          <a-tooltip v-if="record.mountPoint" :title="record.mountPoint">
-            <a-tag color="geekblue">{{ record.mountPoint }}</a-tag>
-          </a-tooltip>
-          <span v-else style="color: #ccc">-</span>
-        </template>
-      </a-table-column>
-      <a-table-column title="使用说明" :width="200">
-        <template #default="{ record }">
-          <a-tooltip v-if="record.usageInstructions" :title="record.usageInstructions">
-            <span style="display: inline-block; max-width: 180px" class="ellipsis">{{ record.usageInstructions }}</span>
-          </a-tooltip>
-          <span v-else style="color: #ccc">-</span>
-        </template>
-      </a-table-column>
-      <a-table-column title="状态" :width="90">
-        <template #default="{ record }">
-          <a-tag :color="record.status === 'READY' ? 'green' : record.status === 'FAILED' ? 'red' : 'orange'">
-            {{ record.status === 'READY' ? '就绪' : record.status === 'UPLOADING' ? '上传中' : record.status === 'FAILED' ? '失败' : record.status }}
-          </a-tag>
-        </template>
-      </a-table-column>
-      <a-table-column title="创建时间" :width="160">
-        <template #default="{ record }">{{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
-      </a-table-column>
-      <a-table-column title="操作" :width="200">
-        <template #default="{ record }">
-          <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
-          <a-button type="link" size="small" @click="downloadImage(record)">下载</a-button>
-          <a-button type="link" size="small" @click="openShare(record)">{{ shareLabel }}</a-button>
-          <a-button type="link" size="small" danger @click="confirmDelete(record)">删除</a-button>
-        </template>
-      </a-table-column>
-    </a-table>
+    <a-tabs v-model:active-key="activeTab" @change="onTabChange">
+      <!-- 镜像列表 -->
+      <a-tab-pane key="list" tab="镜像列表">
+        <a-table :data-source="images" :loading="loading" row-key="id" :pagination="false">
+          <a-table-column title="镜像名" data-index="name" />
+          <a-table-column title="标签" data-index="tag" :width="100" />
+          <a-table-column title="归属" :width="120">
+            <template #default="{ record }">
+              <a-tag v-if="record.isPublic" color="purple">公共</a-tag>
+              <a-tag v-else-if="record.visibility === 'SHARED_TO_ALL'" color="geekblue">全员</a-tag>
+              <span v-else>{{ record.ownerName ?? '-' }}</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="分发" :width="80">
+            <template #default="{ record }">
+              <a-tag :color="record.distribution === 'REGISTRY' ? 'blue' : 'default'">
+                {{ record.distribution === 'REGISTRY' ? '仓库' : 'tar' }}
+              </a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="有效性" :width="90">
+            <template #default="{ record }">
+              <a-tag :color="validityLabel(record).color">{{ validityLabel(record).text }}</a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="大小" :width="100">
+            <template #default="{ record }">{{ formatSize(record.sizeBytes) }}</template>
+          </a-table-column>
+          <a-table-column title="来源" :width="110">
+            <template #default="{ record }">
+              <a-tag v-if="record.sourceContainer === 'tar-upload'" color="cyan">tar上传</a-tag>
+              <a-tag v-else-if="record.sourceContainer === 'registry-register'" color="blue">登记</a-tag>
+              <a-tag v-else-if="record.sourceContainer === 'registry-claim'" color="purple">补录</a-tag>
+              <a-tag v-else-if="record.sourceContainer === 'dockerfile-build'" color="blue">Dockerfile</a-tag>
+              <a-tag v-else-if="record.sourceContainer" color="green">commit</a-tag>
+              <span v-else>-</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="应用端口" :width="160">
+            <template #default="{ record }">
+              <template v-if="record.appPorts && record.appPorts.length">
+                <a-tag v-for="p in record.appPorts" :key="p" color="blue">{{ p }}</a-tag>
+              </template>
+              <span v-else style="color: #ccc">-</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="容器内挂载" :width="160">
+            <template #default="{ record }">
+              <a-tooltip v-if="record.mountPoint" :title="record.mountPoint">
+                <a-tag color="geekblue">{{ record.mountPoint }}</a-tag>
+              </a-tooltip>
+              <span v-else style="color: #ccc">-</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="使用说明" :width="200">
+            <template #default="{ record }">
+              <a-tooltip v-if="record.usageInstructions" :title="record.usageInstructions">
+                <span style="display: inline-block; max-width: 180px" class="ellipsis">{{ record.usageInstructions }}</span>
+              </a-tooltip>
+              <span v-else style="color: #ccc">-</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="状态" :width="90">
+            <template #default="{ record }">
+              <a-tag :color="record.status === 'READY' ? 'green' : record.status === 'FAILED' ? 'red' : 'orange'">
+                {{ record.status === 'READY' ? '就绪' : record.status === 'UPLOADING' ? '推送中' : record.status === 'FAILED' ? '失败' : record.status }}
+              </a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="创建时间" :width="160">
+            <template #default="{ record }">{{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
+          </a-table-column>
+          <a-table-column title="操作" :width="300">
+            <template #default="{ record }">
+              <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
+              <a-button
+                v-if="record.distribution === 'REGISTRY'"
+                type="link" size="small"
+                @click="openPushCommands(record)"
+              >上传</a-button>
+              <a-button
+                v-if="record.distribution === 'REGISTRY'"
+                type="link" size="small"
+                @click="refreshValidity(record)"
+              >刷新状态</a-button>
+              <a-button
+                v-if="record.distribution !== 'REGISTRY' && record.tarPath"
+                type="link" size="small"
+                @click="downloadImage(record)"
+              >下载</a-button>
+              <a-button type="link" size="small" @click="openShare(record)">{{ shareLabel }}</a-button>
+              <a-button type="link" size="small" danger @click="confirmDelete(record)">删除</a-button>
+            </template>
+          </a-table-column>
+        </a-table>
+      </a-tab-pane>
 
-    <!-- 上传 tar 对话框 -->
+      <!-- 无标记镜像（registry-image-distribution D3，仅管理员） -->
+      <a-tab-pane v-if="isAdmin" key="untagged" tab="无标记镜像">
+        <a-alert
+          type="info" show-icon style="margin-bottom: 12px"
+          message="列出了私有仓库中存在但系统内没有登记记录的镜像。补录元数据后即可对用户开放使用。"
+        />
+        <a-table :data-source="untagged" :loading="untaggedLoading" row-key="repo" :pagination="false">
+          <a-table-column title="镜像名（仓库 repo）" data-index="repo" />
+          <a-table-column title="未登记标签" :width="320">
+            <template #default="{ record }">
+              <a-tag v-for="t in record.tags" :key="t" color="blue" style="margin: 2px">{{ t }}</a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="操作" :width="160">
+            <template #default="{ record }">
+              <a-button
+                v-for="t in record.tags" :key="t"
+                type="link" size="small"
+                @click="openClaim(record, t)"
+              >登记 {{ t }}</a-button>
+            </template>
+          </a-table-column>
+        </a-table>
+      </a-tab-pane>
+    </a-tabs>
+
+    <!-- 登记镜像对话框（registry-image-distribution D3：纯元数据，无文件上传） -->
     <a-modal
-      v-model:open="uploadVisible"
-      title="上传 tar 镜像"
+      v-model:open="registerVisible"
+      title="登记镜像"
       width="700px"
       :confirm-loading="submitting"
-      @ok="handleSubmit"
+      @ok="handleRegister"
     >
       <a-form layout="vertical">
-        <a-form-item label="镜像名（由 tar RepoTags 解析，不可修改）">
-          <a-input v-model:value="tarForm.name" disabled placeholder="选定 tar 后自动解析" />
+        <a-form-item label="原始镜像名" required>
+          <a-input v-model:value="registerForm.name" placeholder="如 lab404-jupyter（须为 docker 合法小写镜像名）" />
         </a-form-item>
-        <a-form-item label="标签（由 tar RepoTags 解析，不可修改）">
-          <a-input v-model:value="tarForm.tag" disabled placeholder="选定 tar 后自动解析" />
+        <a-form-item label="原始标签">
+          <a-input v-model:value="registerForm.tag" placeholder="如 0.1（默认 latest）" />
         </a-form-item>
-        <a-form-item label="应用端口（多个，可留空；选定 tar 后自动解析 ExposedPorts 预填）">
+        <a-form-item label="应用端口（多个，可留空；创建容器时预填容器内端口）">
           <a-select
-            :value="tarForm.appPorts"
+            :value="registerForm.appPorts"
             mode="tags"
-            placeholder="如 8888, 6006（留空则自动解析）"
-            @change="appPortChange"
-          />
-        </a-form-item>
-        <a-form-item label="使用说明">
-          <a-textarea
-            v-model:value="tarForm.usageInstructions"
-            :rows="2"
-            placeholder="镜像用途、启动方式等说明（可选）"
+            placeholder="如 8888, 6006"
+            @change="registerPortChange"
           />
         </a-form-item>
         <a-form-item label="容器内挂载">
           <a-input
-            v-model:value="tarForm.mountPoint"
+            v-model:value="registerForm.mountPoint"
             placeholder="如 /workspace（存储池映射到容器内的路径，创建容器时自动预填）"
           />
         </a-form-item>
-        <a-form-item label="拖拽上传 tar 文件" required>
-          <a-upload-dragger
-            v-model:file-list="fileList"
-            :before-upload="handleBeforeUpload"
-            :max-count="1"
-            accept=".tar"
-            @remove="handleRemoveFile"
-          >
-            <p style="font-size: 16px"><strong>点击或拖拽 tar 文件到此区域上传</strong></p>
-            <p style="color: #999; font-size: 12px">
-              {{ parsing ? '正在解析 tar…' : '选定后自动解析并回填名称/标签/端口，上传后存储于管理端' }}
-            </p>
-          </a-upload-dragger>
+        <a-form-item label="使用说明">
+          <a-textarea
+            v-model:value="registerForm.usageInstructions"
+            :rows="2"
+            placeholder="镜像用途、启动方式等说明（可选）"
+          />
         </a-form-item>
+        <a-alert
+          type="info" show-icon
+          message="登记后需在本机执行推送命令（docker tag + docker push）将镜像推送至私有仓库，再点击列表中的「刷新状态」确认有效。"
+        />
       </a-form>
+    </a-modal>
+
+    <!-- 上传命令对话框（D3：操作列"上传"按钮） -->
+    <a-modal
+      :open="pushCmdVisible"
+      title="推送镜像到私有仓库"
+      :footer="null"
+      @cancel="pushCmdVisible = false"
+    >
+      <template v-if="pushCmds">
+        <p style="color: #666">
+          在本机（已有该镜像的机器）依次执行以下命令完成推送，全部推送完成后回到列表点击"刷新状态"：
+        </p>
+        <div v-for="cmd in [pushCmds.tagCmd, pushCmds.pushCmd]" :key="cmd" style="position: relative; margin-bottom: 12px">
+          <pre style="background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 4px; font-size: 12px; margin: 0; padding-right: 72px; overflow-x: auto">{{ cmd }}</pre>
+          <a-button
+            size="small" type="primary"
+            style="position: absolute; top: 10px; right: 10px"
+            @click="copyText(cmd)"
+          >复制</a-button>
+        </div>
+        <a-alert
+          type="warning" show-icon
+          :message="`若本机 Docker 未配置私有仓库（${pushCmds.registryUrl}）为 insecure-registry，push 会失败，请先在 Docker daemon 配置 insecure-registries 并重启 Docker。`"
+        />
+      </template>
     </a-modal>
 
     <!-- 共享/权限对话框（platform-refinements 6.8；管理员为权限管理） -->
@@ -423,7 +581,7 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
         <a-alert
           v-else-if="shareForm.mode === 'all'"
           type="info" show-icon
-          message="所有用户均可在镜像列表看到并使用该镜像创建容器（不自动同步至受控端，按需 docker load）。"
+          message="所有用户均可在镜像列表看到并使用该镜像创建容器（不自动同步至受控端，创建时按需拉取/导入）。"
         />
         <a-alert
           v-else-if="shareForm.mode === 'private'"
@@ -465,6 +623,51 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
             placeholder="如 /workspace（存储池映射到容器内的路径，创建容器时自动预填）"
           />
         </a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 无标记镜像补录（D3，仅管理员） -->
+    <a-modal
+      v-model:open="claimVisible"
+      title="补录无标记镜像"
+      :confirm-loading="claimSubmitting"
+      @ok="handleClaim"
+    >
+      <a-form layout="vertical">
+        <a-form-item label="镜像（仓库 repo:tag）">
+          <a-input :value="`${claimForm.repo}:${claimForm.tag}`" disabled />
+        </a-form-item>
+        <a-form-item label="应用端口（多个，可留空；创建容器时预填容器内端口）">
+          <a-select
+            :value="claimForm.appPorts"
+            mode="tags"
+            placeholder="如 8888, 6006"
+            @change="claimPortChange"
+          />
+        </a-form-item>
+        <a-form-item label="容器内挂载">
+          <a-input
+            v-model:value="claimForm.mountPoint"
+            placeholder="如 /workspace（存储池映射到容器内的路径，创建容器时自动预填）"
+          />
+        </a-form-item>
+        <a-form-item label="使用说明">
+          <a-textarea
+            v-model:value="claimForm.usageInstructions"
+            :rows="3"
+            placeholder="镜像用途、启动方式、访问方式等说明"
+          />
+        </a-form-item>
+        <a-form-item label="可见性">
+          <a-radio-group v-model:value="claimForm.visibility">
+            <a-radio value="SHARED_TO_ALL">全员可见</a-radio>
+            <a-radio value="PRIVATE">仅本人</a-radio>
+          </a-radio-group>
+        </a-form-item>
+        <a-alert
+          type="info" show-icon
+          message="补录后镜像立即有效（READY），按所设可见性对用户开放，可用于创建容器。"
+        />
       </a-form>
     </a-modal>
   </div>

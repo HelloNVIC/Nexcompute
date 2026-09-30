@@ -58,6 +58,7 @@ public class StorageInitializer {
         createDir(root + "/tmp", "临时文件");
 
         log.info("[Storage] 文件存储根目录: {}", root);
+        log.info("[Registry] 私有镜像仓库地址: {}", properties.getRegistry().getUrl());
         log.info("[Storage] 系统配置: 采集粒度={}s, 保留={}日, 心跳超时={}s, 心跳间隔={}s, 文件分块={}B",
                 properties.getMonitoring().getCollectIntervalSeconds(),
                 properties.getMonitoring().getRetentionDays(),

@@ -110,7 +110,7 @@ async function handleCommit(): Promise<void> {
   let tick = 0
   commitStageTimer = setInterval(() => {
     tick += 1
-    commitStage.value = ['提交中…', '打包中…', '上传中…'][tick % 3]
+    commitStage.value = ['提交中…', '打标中…', '推送中…'][tick % 3]
   }, 5000)
   try {
     await containerApi.commitImage(commitContainerId.value, {
@@ -119,7 +119,7 @@ async function handleCommit(): Promise<void> {
       project: commitForm.project || undefined,
       note: commitForm.note || undefined,
     })
-    message.success('镜像提交持久化已完成，回传成功后可在镜像管理查看')
+    message.success('镜像提交持久化已完成，推送成功后即可在镜像管理查看')
     commitVisible.value = false
   } catch {
     // 拦截器已提示
@@ -242,6 +242,16 @@ onMounted(load)
 
 // platform-improvements 任务 4.4：订阅 container SSE 事件，实时更新容器列表状态
 let offContainerSse: (() => void) | null = null
+// registry-image-distribution D6：订阅 containerImagePull，创建容器时实时展示镜像拉取进度
+let offImagePullSse: (() => void) | null = null
+// 拉取进度状态（按当前创建表单所选镜像的 name:tag 后缀过滤；仓库地址前缀来自后端事件，无需前端获知）
+const pullPercent = ref(0)
+const pullText = ref('')
+const pullRefSuffix = computed(() => {
+  const img = images.value.find((i) => `${i.name}:${i.tag}` === form.imageRef)
+  if (!img || img.distribution !== 'REGISTRY') return null
+  return `/${img.name}:${img.tag}`
+})
 onMounted(() => {
   offContainerSse = getSseClient().on('container', (data) => {
     const ev = data as { containerId?: number; status?: string }
@@ -251,9 +261,18 @@ onMounted(() => {
       target.status = ev.status
     }
   })
+  offImagePullSse = getSseClient().on('containerImagePull', (data) => {
+    const ev = data as { imageRef?: string; stage?: string; percent?: number; text?: string }
+    if (!ev || !createProgressVisible.value) return
+    // 按当前创建所选镜像过滤（同用户并发创建时避免事件串扰，D6）
+    if (pullRefSuffix.value && !(ev.imageRef ?? '').endsWith(pullRefSuffix.value)) return
+    pullPercent.value = ev.percent ?? 0
+    pullText.value = ev.text ?? ''
+  })
 })
 onUnmounted(() => {
   offContainerSse?.()
+  offImagePullSse?.()
   if (logsTimer) clearInterval(logsTimer)
 })
 
@@ -296,13 +315,18 @@ async function handleCreate(): Promise<void> {
   }, null, 2)
 
   submitting.value = true
-  // platform-refinements #1：显示阶段进度提示
+  // platform-refinements #1：显示阶段进度提示；registry-image-distribution D6：拉取进度经 SSE 实时刷新
   createStage.value = '容器下发中...'
+  pullPercent.value = 0
+  pullText.value = ''
   createProgressVisible.value = true
   let stageTick = 0
   createStageTimer = setInterval(() => {
     stageTick += 1
-    createStage.value = stageTick % 2 === 0 ? '容器下发中...' : '容器创建中...'
+    // 有拉取进度帧时由 SSE 驱动文案；无帧（镜像已本地）保持下发/创建交替
+    if (!pullText.value) {
+      createStage.value = stageTick % 2 === 0 ? '容器下发中...' : '容器创建中...'
+    }
   }, 4000)
   try {
     await containerApi.create({
@@ -573,10 +597,16 @@ watch(selectedImage, (img) => {
               :key="i.id"
               :value="`${i.name}:${i.tag}`"
               :label="i.name + ':' + i.tag"
+              :disabled="i.distribution === 'REGISTRY' && i.registryValid !== true"
             >
               {{ i.name }}:{{ i.tag }}
               <a-tag v-if="i.isPublic" color="purple" style="margin-left: 8px">公共</a-tag>
               <span v-else-if="i.ownerName" style="margin-left: 8px; color: #999">{{ i.ownerName }}</span>
+              <!-- registry-image-distribution：无效/未检查的仓库镜像禁选并标注 -->
+              <a-tag
+                v-if="i.distribution === 'REGISTRY' && i.registryValid !== true"
+                color="red" style="margin-left: 8px"
+              >{{ i.registryValid === false ? '无效（未推送）' : '未检查' }}</a-tag>
             </a-select-option>
           </a-select>
         </a-form-item>
@@ -678,7 +708,7 @@ watch(selectedImage, (img) => {
       </a-form>
     </a-modal>
 
-    <!-- 创建过程阶段提示（platform-refinements #1） -->
+    <!-- 创建过程阶段提示（platform-refinements #1；registry-image-distribution D6：镜像拉取实时进度） -->
     <a-modal
       v-model:open="createProgressVisible"
       :closable="false"
@@ -689,9 +719,21 @@ watch(selectedImage, (img) => {
       title="容器创建"
     >
       <div style="text-align: center; padding: 16px 0">
-        <a-progress :percent="75" status="active" :show-info="false" />
-        <p style="margin-top: 16px; font-size: 15px">{{ createStage }}</p>
-        <p style="color: #999; font-size: 12px">正在与受控端通信，请稍候…</p>
+        <a-progress
+          :percent="pullText ? pullPercent : 75"
+          status="active"
+          :show-info="!!pullText"
+        />
+        <!-- 有拉取帧：展示实时阶段（拉取中/拉取完成转创建）；无帧：定时器交替的下发/创建 -->
+        <p style="margin-top: 16px; font-size: 15px">
+          {{ pullText ? (pullPercent >= 100 ? '镜像拉取完成，容器创建中...' : '镜像拉取中...') : createStage }}
+        </p>
+        <p v-if="pullText" style="font-family: monospace; font-size: 12px; color: #555; margin: 4px 0">
+          {{ pullText }}
+        </p>
+        <p style="color: #999; font-size: 12px">
+          {{ pullText ? '正在从私有仓库拉取镜像（大镜像可能需要数分钟）...' : '正在与受控端通信，请稍候…' }}
+        </p>
       </div>
     </a-modal>
 
@@ -758,7 +800,7 @@ watch(selectedImage, (img) => {
         <a-alert
           type="info"
           show-icon
-          message="受控端将 docker commit + save 导出 tar 并回传管理端，回传完成方可使用该镜像。"
+          message="受控端将 docker commit 后 tag + push 至私有仓库，推送全部完成后方可使用该镜像（不再回传 tar）。"
         />
       </a-form>
     </a-modal>
@@ -776,7 +818,7 @@ watch(selectedImage, (img) => {
       <div style="text-align: center; padding: 16px 0">
         <a-progress :percent="75" status="active" :show-info="false" />
         <p style="margin-top: 16px; font-size: 15px">{{ commitStage }}</p>
-        <p style="color: #999; font-size: 12px">受控端正在 commit + save + 回传，请稍候…</p>
+        <p style="color: #999; font-size: 12px">受控端正在 commit + tag + push 至私有仓库，请稍候…</p>
       </div>
     </a-modal>
 

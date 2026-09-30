@@ -47,6 +47,51 @@ public class ImageController {
         return ApiResponse.success(imageService.editMetadata(
                 id, request.getAppPorts(), request.getUsageInstructions(), request.getMountPoint()));
     }
+
+    // ===== registry-image-distribution：私有仓库镜像登记 / 有效性 / 推送命令 / 无标记镜像 =====
+
+    /**
+     * 登记私有仓库镜像（D3）：原始镜像名:原始标签 + 应用端口/挂载/使用说明，无文件上传。
+     * 登记后状态 UPLOADING（未推送），用户经"上传"弹窗命令自行推送，"刷新状态"确认有效。
+     */
+    @PostMapping("/register")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageMetadata> register(@RequestBody RegisterRequest request) {
+        return ApiResponse.success(imageService.registerRegistryImage(
+                request.getName(), request.getTag(), request.getAppPorts(),
+                request.getMountPoint(), request.getUsageInstructions()));
+    }
+
+    /** 刷新仓库有效性（D3）：经 Registry v2 API 检查是否已推送，更新 registry_valid/checked_at。 */
+    @PostMapping("/{id}/refresh-validity")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageMetadata> refreshValidity(@PathVariable Long id) {
+        return ApiResponse.success(imageService.refreshValidity(id));
+    }
+
+    /** 推送命令（D3，操作列"上传"弹窗数据）：registryUrl + tag/push 命令由后端拼装。 */
+    @GetMapping("/{id}/push-commands")
+    @RequirePermission(module = "image", action = RequirePermission.Action.VIEW)
+    public ApiResponse<ImageService.PushCommands> pushCommands(@PathVariable Long id) {
+        return ApiResponse.success(imageService.getPushCommands(id));
+    }
+
+    /** 无标记镜像列表（D3，仅管理员）：仓库中存在但系统内无记录的镜像（repo + 未登记 tags）。 */
+    @GetMapping("/registry/untagged")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<List<ImageService.UntaggedImage>> listUntagged() {
+        return ApiResponse.success(imageService.listUntaggedRegistryImages());
+    }
+
+    /** 无标记镜像补录（D3，仅管理员）：补录元数据转为系统内可用镜像。 */
+    @PostMapping("/registry/untagged/claim")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageMetadata> claimUntagged(@RequestBody ClaimRequest request) {
+        return ApiResponse.success(imageService.claimUntaggedRegistryImage(
+                request.getRepo(), request.getTag(), request.getAppPorts(),
+                request.getMountPoint(), request.getUsageInstructions(), request.getVisibility()));
+    }
+
     @PostMapping("/{id}/share")
     @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
     public ApiResponse<Void> share(@PathVariable Long id, @RequestBody ShareRequest request) {
@@ -184,6 +229,32 @@ public class ImageController {
         private String usageInstructions;
         /** 容器内挂载点（V31）：存储池映射到容器内的路径，创建容器时自动预填 */
         private String mountPoint;
+    }
+
+    /** 私有仓库镜像登记请求（registry-image-distribution D3） */
+    @Data
+    public static class RegisterRequest {
+        /** 原始镜像名（如 lab404-jupyter） */
+        private String name;
+        /** 原始标签（默认 latest） */
+        private String tag;
+        private List<Integer> appPorts;
+        private String mountPoint;
+        private String usageInstructions;
+    }
+
+    /** 无标记镜像补录请求（registry-image-distribution D3，仅管理员） */
+    @Data
+    public static class ClaimRequest {
+        /** 仓库内 repo 名（预填，不可改） */
+        private String repo;
+        /** 标签（从无标记列表选择） */
+        private String tag;
+        private List<Integer> appPorts;
+        private String mountPoint;
+        private String usageInstructions;
+        /** 可见性（默认 SHARED_TO_ALL） */
+        private String visibility;
     }
 
     /** parse-tar 返回（platform-refinements 4.1）：选定 tar 即时解析的 name/tag/appPorts */

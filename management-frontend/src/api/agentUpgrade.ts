@@ -47,7 +47,7 @@ export const agentUpgradeApi = {
       method: 'POST',
       url: '/admin/agent-upgrade/upgrade',
       data: { instanceIds, version },
-      timeout: 0, // 串行下发，可能耗时
+      timeout: 0, // 后端并发同时升级全部实例，耗时=单实例上限（命令超时+版本等待），不设 axios 限时
     }),
   tasks: () => request<AgentUpgradeTask[]>({ method: 'GET', url: '/admin/agent-upgrade/tasks' }),
 }

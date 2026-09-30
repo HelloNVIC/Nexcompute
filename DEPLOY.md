@@ -122,13 +122,13 @@ python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_by
 
 ## 6. 步骤四：配置 Docker 信任私有仓库
 
-私有仓库 `10.13.66.18:5002` 是 HTTP，需让 Docker 信任它（insecure-registries）。
+私有仓库 `10.13.66.18:5002`（后端/前端镜像分发）与 `10.13.66.25:5000`（用户镜像分发，registry-image-distribution）均为 HTTP，需让 Docker 信任它们（insecure-registries）。
 
 **Linux 服务器**：编辑 `/etc/docker/daemon.json`（没有则新建）：
 
 ```json
 {
-  "insecure-registries": ["10.13.66.18:5002"]
+  "insecure-registries": ["10.13.66.18:5002", "10.13.66.25:5000"]
 }
 ```
 
@@ -145,7 +145,9 @@ docker pull 10.13.66.18:5002/nexcompute/frontend:latest
 # 看到 Status: Downloaded / Image is up to date 即成功
 ```
 
-**Windows + Docker Desktop**：Settings → Docker Engine → 在 JSON 里加 `"insecure-registries": ["10.13.66.18:5002"]` → Apply & Restart。
+**Windows + Docker Desktop**：Settings → Docker Engine → 在 JSON 里加 `"insecure-registries": ["10.13.66.18:5002", "10.13.66.25:5000"]` → Apply & Restart。
+
+> **受控端主机同样需要**配置 `10.13.66.25:5000` 为 insecure-registry（用户镜像经该仓库 push/pull 分发）。受控端"环境准备"栏目提供"9. 配置私有镜像仓库"引导按钮（弹窗展示追加片段并支持一键复制），详见 `docs/受控端环境准备.md`。
 
 ---
 

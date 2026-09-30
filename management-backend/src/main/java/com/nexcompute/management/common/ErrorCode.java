@@ -63,6 +63,9 @@ public enum ErrorCode {
     IMAGE_NOT_FOUND(7001, "镜像不存在"),
     IMAGE_TRANSFER_FAILED(7002, "镜像传输失败"),
     IMAGE_REF_NOT_ALLOWED(7003, "镜像不在可选范围"),
+    // registry-image-distribution：私有仓库镜像
+    IMAGE_ALREADY_EXISTS(7004, "已存在同名镜像记录"),
+    REGISTRY_UNAVAILABLE(7005, "私有镜像仓库不可达"),
 
     // 文件传输 8xxx
     FILE_TRANSFER_FAILED(8001, "文件传输失败"),

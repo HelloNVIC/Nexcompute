@@ -1,4 +1,10 @@
-import { http } from '@/utils/request'
+import { http, request } from '@/utils/request'
+
+// 长耗时同步接口超时：后端同步编排（镜像拉取 600s + 容器创建 120s / commit 推送仓库 30min），
+// axios 默认 30s 会在等待期误报"网络异常"，需覆盖后端最长阻塞时间
+const CREATE_TIMEOUT = 15 * 60 * 1000 // 拉取 600s + 创建 120s + 余量
+const COMMIT_TIMEOUT = 31 * 60 * 1000 // commit tag+push 后端 30min 超时 + 余量
+const LIFECYCLE_TIMEOUT = 2 * 60 * 1000 // 后端 lifecycle 60s；大容器 stop/rm 可能超 axios 默认 30s
 
 export interface Container {
   id: number
@@ -50,14 +56,17 @@ export interface ConnectionInfo {
 export const containerApi = {
   list: () => http.get<Container[]>('/containers'),
   get: (id: number) => http.get<Container>(`/containers/${id}`),
-  create: (data: Record<string, unknown>) => http.post<Container>('/containers', data),
+  /** 创建容器（同步编排：必要时先经私有仓库拉取镜像，最长 ~12min，等待期有 SSE 拉取进度） */
+  create: (data: Record<string, unknown>) =>
+    request<Container>({ method: 'POST', url: '/containers', data, timeout: CREATE_TIMEOUT }),
   connectionInfo: (id: number) => http.get<ConnectionInfo>(`/containers/${id}/connection`),
   formSnapshot: (id: number) => http.get<string>(`/containers/${id}/form-snapshot`),
-  lifecycle: (id: number, action: string) => http.post(`/containers/${id}/${action}`),
+  lifecycle: (id: number, action: string) =>
+    request<unknown>({ method: 'POST', url: `/containers/${id}/${action}`, timeout: LIFECYCLE_TIMEOUT }),
   resetSsh: (id: number, password: string) => http.post(`/containers/${id}/reset-ssh`, { password }),
-  /** 容器提交镜像持久化（platform-refinements 6.3） */
+  /** 容器提交镜像持久化（registry：commit 后 tag+push 私有仓库，后端 30min 超时） */
   commitImage: (id: number, data: { imageName: string; imageTag?: string; project?: string; note?: string }) =>
-    http.post(`/containers/${id}/commit-image`, data),
+    request<Container>({ method: 'POST', url: `/containers/${id}/commit-image`, data, timeout: COMMIT_TIMEOUT }),
   /** 共享容器（platform-refinements #2：按工号，可限时） */
   share: (id: number, data: { targetWorkerId: string; expiresAt?: string }) =>
     http.post(`/containers/${id}/share`, data),

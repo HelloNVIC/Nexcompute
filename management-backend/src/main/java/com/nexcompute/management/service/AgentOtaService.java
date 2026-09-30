@@ -31,11 +31,16 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * 受控端 OTA 升级服务（D7）。
  * 管理员上传新版 exe，按实例批量/单独下发 agent.upgrade；
- * 串行下发，单实例失败不阻断其他，写 agent_upgrade_task 状态。
+ * 并发同时升级（每实例一线程：下发 -> 等版本回传 -> 落状态），
+ * 单实例失败不阻断其他，写 agent_upgrade_task 状态。
  */
 @Slf4j
 @Service
@@ -115,7 +120,7 @@ public class AgentOtaService {
     }
 
     /**
-     * 批量/单独升级（D7）：串行向各实例下发 agent.upgrade，单实例失败不阻断其他。
+     * 批量/单独升级（D7）：并发同时升级各实例（每实例一线程），单实例失败不阻断其他。
      * payload {version, md5, downloadUrl}，downloadUrl 为 exe 源路径供受控端 file-transfer 下载。
      */
     @Audited(action = "AGENT_UPGRADE", targetType = "PHYSICAL_INSTANCE")
@@ -156,66 +161,90 @@ public class AgentOtaService {
             return list;
         });
 
-        // 串行下发，单实例失败不阻断其他
+        // 并发同时升级：每实例一线程并行执行 下发 -> 等版本回传 -> 落状态，
+        // 全部结束（成功/失败/超时）后统一返回（前端 upgrade 请求 timeout=0 不限时；
+        // 单实例耗时上限 = 命令超时 + 版本等待超时，与实例数无关）。
         Map<String, Object> payload = Map.of("version", safeVersion, "md5", md5, "downloadUrl", downloadUrl);
-        for (AgentUpgradeTask task : tasks) {
-            try {
-                // D6.2：区分"命令下发失败"与"等待版本回传超时"两类失败信息
-                // —— sendCommand 抛异常若为下发前/中连接异常（命令未成功送达）即"命令下发失败"；
-                //    受控端返回 replacing 后立即退出致 WS 断开属正常退出，不算命令失败。
-                boolean commandDispatched = true;
-                String dispatchError = null;
-                String commandId = null;
-                try {
-                    var dispatch = agentCommandService.sendCommandWithId(
-                            task.getInstanceNumber(), "agent.upgrade", payload,
-                            properties.getAgent().getUpgradeCommandTimeoutMs());
-                    commandId = dispatch.commandId();
-                    // D2：注册进度追踪（commandId <-> task/instance/目标版本）
-                    otaProgressTracker.register(commandId, task.getId(), task.getInstanceId(),
-                            task.getInstanceNumber(), safeVersion);
-                } catch (Exception cmdEx) {
-                    // 受控端可能在返回 replacing 后立即退出致连接断开，这种异常不算命令失败
-                    String msg = String.valueOf(cmdEx.getMessage());
-                    if (msg != null && (msg.contains("replacing") || msg.contains("abrupt")
-                            || msg.contains("reset") || msg.contains("broken"))) {
-                        log.info("[AgentOTA] 受控端返回后退出致连接断开（正常）: {}", msg);
-                    } else {
-                        // 命令本身未成功送达/受控端未返回 replacing → 命令下发失败
-                        commandDispatched = false;
-                        dispatchError = "升级命令下发失败：" + msg;
-                        log.warn("[AgentOTA] 升级命令下发失败: {}", msg);
-                    }
-                }
-
-                boolean ok = false;
-                if (commandDispatched) {
-                    // D1：等待受控端重启并回传目标版本，心跳回传目标版本即 SUCCESS
-                    ok = waitForVersionUpgrade(task.getInstanceId(), safeVersion,
-                            properties.getAgent().getUpgradeVersionWaitTimeoutMs());
-                    if (!ok && commandId != null) {
-                        otaProgressTracker.onTimeout(commandId);
-                    }
-                }
-                if (commandId != null) {
-                    otaProgressTracker.finish(commandId);
-                }
-                task.setStatus(ok ? "SUCCESS" : "FAILED");
-                if (!ok) {
-                    task.setError(commandDispatched
-                            ? "等待版本回传超时：升级后未在 " + (properties.getAgent().getUpgradeVersionWaitTimeoutMs() / 1000)
-                                + "s 内回传目标版本 " + safeVersion
-                            : dispatchError);
-                }
-            } catch (Exception e) {
-                task.setStatus("FAILED");
-                task.setError(e.getMessage());
-                log.warn("[AgentOTA] 实例 {} 升级异常: {}", task.getInstanceNumber(), e.getMessage());
+        ExecutorService pool = Executors.newFixedThreadPool(tasks.size());
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (AgentUpgradeTask task : tasks) {
+                futures.add(pool.submit(() -> upgradeOneInstance(task, payload, safeVersion)));
             }
-            task.setFinishedAt(Instant.now());
-            taskRepository.save(task);
+            for (Future<?> f : futures) {
+                try {
+                    f.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("[AgentOTA] 等待升级线程被中断");
+                } catch (ExecutionException e) {
+                    log.warn("[AgentOTA] 升级线程异常: {}", e.getCause() == null ? e : e.getCause().getMessage());
+                }
+            }
+        } finally {
+            pool.shutdownNow();
         }
         return tasks;
+    }
+
+    /**
+     * 单实例升级（并发 worker）：下发 agent.upgrade（带进度追踪）-> 等待版本回传 -> 落最终状态。
+     * 异常均吞掉并记入 task（FAILED），不影响其他实例。
+     * 原 D6.2 失败分类逻辑不变：命令下发失败 / 等待版本回传超时。
+     */
+    private void upgradeOneInstance(AgentUpgradeTask task, Map<String, Object> payload, String safeVersion) {
+        try {
+            boolean commandDispatched = true;
+            String dispatchError = null;
+            String commandId = null;
+            try {
+                var dispatch = agentCommandService.sendCommandWithId(
+                        task.getInstanceNumber(), "agent.upgrade", payload,
+                        properties.getAgent().getUpgradeCommandTimeoutMs());
+                commandId = dispatch.commandId();
+                // D2：注册进度追踪（commandId <-> task/instance/目标版本）
+                otaProgressTracker.register(commandId, task.getId(), task.getInstanceId(),
+                        task.getInstanceNumber(), safeVersion);
+            } catch (Exception cmdEx) {
+                // 受控端可能在返回 replacing 后立即退出致连接断开，这种异常不算命令失败
+                String msg = String.valueOf(cmdEx.getMessage());
+                if (msg != null && (msg.contains("replacing") || msg.contains("abrupt")
+                        || msg.contains("reset") || msg.contains("broken"))) {
+                    log.info("[AgentOTA] 受控端返回后退出致连接断开（正常）: {}", msg);
+                } else {
+                    // 命令本身未成功送达/受控端未返回 replacing -> 命令下发失败
+                    commandDispatched = false;
+                    dispatchError = "升级命令下发失败：" + msg;
+                    log.warn("[AgentOTA] 升级命令下发失败: {}", msg);
+                }
+            }
+
+            boolean ok = false;
+            if (commandDispatched) {
+                // D1：等待受控端重启并回传目标版本，心跳回传目标版本即 SUCCESS
+                ok = waitForVersionUpgrade(task.getInstanceId(), safeVersion,
+                        properties.getAgent().getUpgradeVersionWaitTimeoutMs());
+                if (!ok && commandId != null) {
+                    otaProgressTracker.onTimeout(commandId);
+                }
+            }
+            if (commandId != null) {
+                otaProgressTracker.finish(commandId);
+            }
+            task.setStatus(ok ? "SUCCESS" : "FAILED");
+            if (!ok) {
+                task.setError(commandDispatched
+                        ? "等待版本回传超时：升级后未在 " + (properties.getAgent().getUpgradeVersionWaitTimeoutMs() / 1000)
+                                + "s 内回传目标版本 " + safeVersion
+                        : dispatchError);
+            }
+        } catch (Exception e) {
+            task.setStatus("FAILED");
+            task.setError(e.getMessage());
+            log.warn("[AgentOTA] 实例 {} 升级异常: {}", task.getInstanceNumber(), e.getMessage());
+        }
+        task.setFinishedAt(Instant.now());
+        taskRepository.save(task);
     }
 
     /**
