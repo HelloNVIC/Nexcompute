@@ -75,6 +75,51 @@ export interface ClaimUntaggedPayload {
   visibility?: 'SHARED_TO_ALL' | 'PRIVATE'
 }
 
+/** 镜像同步任务（V36：批次内每实例一行） */
+export interface ImageSyncTask {
+  id: number
+  batchId: number
+  instanceId: number
+  instanceNumber: string
+  commandId?: string | null
+  status: 'PENDING' | 'PULLING' | 'PULLED' | 'ALREADY_EXISTS' | 'FAILED' | 'TIMEOUT' | 'OFFLINE_SKIPPED'
+  percent?: number | null
+  lastText?: string | null
+  errorMessage?: string | null
+  createdAt: string
+  updatedAt?: string
+  finishedAt?: string | null
+}
+
+/** 镜像同步批次视图（V36：批次 + 任务列表 + 终态计数汇总） */
+export interface SyncBatchView {
+  batch: {
+    id: number
+    imageId: number
+    imageRef: string
+    initiatedBy: number
+    status: 'RUNNING' | 'DONE'
+    createdAt: string
+    finishedAt?: string | null
+  }
+  tasks: ImageSyncTask[]
+  total: number
+  pulled: number
+  alreadyExists: number
+  failed: number
+  offlineSkipped: number
+}
+
+/** imageSyncProgress SSE 事件（V36） */
+export interface ImageSyncProgressEvent {
+  batchId: number
+  instanceNumber: string
+  status: string
+  percent: number
+  text?: string
+  error?: string
+}
+
 export const imageApi = {
   list: () => http.get<ImageMetadata[]>('/images'),
   get: (id: number) => http.get<ImageMetadata>(`/images/${id}`),
@@ -131,4 +176,11 @@ export const imageApi = {
   /** 无标记镜像补录（仅管理员） */
   claimUntagged: (payload: ClaimUntaggedPayload) =>
     http.post<ImageMetadata>('/images/registry/untagged/claim', payload),
+  // ===== V36：镜像同步到所有机器（仅管理员） =====
+  /** 发起同步：为全部在线实例下发 image.pull，离线标跳过；返回批次视图 */
+  syncAll: (id: number) => http.post<SyncBatchView>(`/images/${id}/sync-all`),
+  /** 查询同步批次（刷新页面后恢复视图） */
+  getSyncBatch: (batchId: number) => http.get<SyncBatchView>(`/images/sync-batches/${batchId}`),
+  /** 查询镜像进行中的同步批次；无进行中批次时 data 为 null */
+  getActiveSyncBatch: (id: number) => http.get<SyncBatchView | null>(`/images/${id}/sync-batches/active`),
 }

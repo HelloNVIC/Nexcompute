@@ -1,5 +1,6 @@
 package com.nexcompute.management.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nexcompute.management.config.NexcomputeProperties;
 import com.nexcompute.management.repository.PermissionMatrixRepository;
 import com.nexcompute.management.repository.PermissionModuleRepository;
@@ -34,6 +35,7 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final NexcomputeProperties properties;
+    private final ObjectMapper objectMapper;
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -54,6 +56,9 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .anyRequest().authenticated()
             )
+            // agent-defaults：未认证（无/过期 token）统一 401 + 业务码 1003，
+            // 取代默认 Http403ForbiddenEntryPoint（403 空 body 致前端无限弹"无权限"不跳登录）
+            .exceptionHandling(e -> e.authenticationEntryPoint(new RestAuthenticationEntryPoint(objectMapper)))
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

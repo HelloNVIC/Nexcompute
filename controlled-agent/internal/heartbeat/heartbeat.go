@@ -200,11 +200,15 @@ func (r *Reporter) doHeartbeat(allowReregister bool) {
 			log.Printf("[heartbeat] 已注册: id=%d number=%s", result.Data.InstanceId, result.Data.InstanceNumber)
 		}
 		// platform-refinements 11.2：非首次心跳回包补推全局管理员密码（离线受控端上线即获取）
-		if result.Data.LocalAdminPassword != "" {
-			_ = config.Update(func(c *config.Config) {
+		// agent-defaults：密码与本地一致时不触发 config.Update——防心跳每秒全量重写配置文件覆盖手动编辑
+		if shouldSyncAdminPassword(result.Data.LocalAdminPassword, r.cfg.LocalAdminPassword) {
+			if err := config.Update(func(c *config.Config) {
 				c.LocalAdminPassword = result.Data.LocalAdminPassword
-			})
-			log.Println("[heartbeat] 全局管理员密码已同步")
+			}); err != nil {
+				log.Printf("[heartbeat] 保存全局管理员密码失败: %v", err)
+			} else {
+				log.Println("[heartbeat] 全局管理员密码已同步")
+			}
 		}
 	}
 }
@@ -219,6 +223,12 @@ func parseErrorCode(resp *http.Response) int {
 		return 0
 	}
 	return body.Code
+}
+
+// shouldSyncAdminPassword 判定心跳回包的管理员密码是否需要落盘：
+// 回包未携带（空）或与本地当前值一致时返回 false（agent-defaults：防心跳周期性重写配置文件）。
+func shouldSyncAdminPassword(received, current string) bool {
+	return received != "" && received != current
 }
 
 // collectContainerStatuses 采集本机各容器运行状态（任务 4.1）。

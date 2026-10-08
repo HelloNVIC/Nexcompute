@@ -58,9 +58,12 @@ var (
 		ConnectMode:             "direct",
 		PublicImageSyncInterval: 3600,
 	}
-	cfg     *Config
-	cfgOnce sync.Once
-	cfgMu   sync.RWMutex
+	// defaultStorageRoot 存储池根目录默认值（agent-defaults：新装与存量空值统一补填，见
+	// backfillDefaultStorageRoot；var 而非常量便于测试替换为临时目录，避免单测触碰真实 D 盘）
+	defaultStorageRoot = `D:\lab404`
+	cfg                *Config
+	cfgOnce            sync.Once
+	cfgMu              sync.RWMutex
 )
 
 // withDerivedURLs 根据 ServerURL 派生心跳与 WS 地址
@@ -121,9 +124,7 @@ func loadOrDefault() *Config {
 		if os.IsNotExist(err) {
 			c := defaultCfg
 			c = *withDerivedURLs(&c)
-			if err := persist(&c); err != nil {
-				log.Printf("[config] 创建默认配置失败: %v", err)
-			}
+			backfillDefaultStorageRoot(&c)
 			return &c
 		}
 		log.Printf("[config] 读取配置失败: %v，使用默认值", err)
@@ -134,7 +135,35 @@ func loadOrDefault() *Config {
 	if err := json.Unmarshal(data, &c); err != nil {
 		log.Printf("[config] 解析配置失败: %v，使用默认值", err)
 	}
-	return withDerivedURLs(&c)
+	c = *withDerivedURLs(&c)
+	// agent-defaults：存量配置 storageRoot 为空时补填默认值并落盘
+	backfillDefaultStorageRoot(&c)
+	return &c
+}
+
+// backfillDefaultStorageRoot 存储池根目录为空时补填默认值（agent-defaults：新装与存量空值
+// 统一走此路径）。补填不锁定（StorageRootLocked 保持 false，用户仍可经 GUI 修改），补填时
+// 确保目录存在并落盘；目录创建/落盘失败仅记日志不阻断启动。
+func backfillDefaultStorageRoot(c *Config) {
+	if c.StorageRoot != "" {
+		return
+	}
+	c.StorageRoot = defaultStorageRoot
+	ensureStorageRootDir(c)
+	if err := persist(c); err != nil {
+		log.Printf("[config] 补填默认存储池根目录落盘失败: %v", err)
+	}
+}
+
+// ensureStorageRootDir 确保存储池根目录存在（默认值/补填路径；失败仅记日志不阻断启动，
+// 日志写入由 logging 模块自行回退容错）。
+func ensureStorageRootDir(c *Config) {
+	if c.StorageRoot == "" {
+		return
+	}
+	if err := os.MkdirAll(c.StorageRoot, 0755); err != nil {
+		log.Printf("[config] 创建存储池根目录 %s 失败（忽略继续）: %v", c.StorageRoot, err)
+	}
 }
 
 func persist(c *Config) error {
@@ -146,7 +175,12 @@ func persist(c *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	// agent-defaults：原子写——先写同目录临时文件再替换，防写一半进程退出损坏配置文件
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func configPath() string {

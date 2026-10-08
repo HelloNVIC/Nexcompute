@@ -118,7 +118,7 @@ Nexcompute/
 │       │   ├── security/      # JWT / 权限矩阵 / @RequirePermission
 │       │   ├── service/       # 47 个业务服务（含 TrueNasClient / NewApiClient / NasPasswordEncryptor）
 │       │   └── sse/           # 服务端推送
-│       └── resources/db/migration/   # Flyway V1~V35 迁移脚本
+│       └── resources/db/migration/   # Flyway V1~V36 迁移脚本
 ├── management-frontend/     # Vue 3 + TypeScript + Vite
 │   └── src/{views,api,stores,components,router,layouts,types,utils}
 ├── controlled-agent/        # Go 受控端（托盘 GUI + 心跳 + WS + Docker）
@@ -301,6 +301,7 @@ public void deleteContainer(Long id) { ... }
 - **有效性检查**：管理端经 Registry v2 API 检查镜像是否确已推送，仅有效镜像可用于创建容器；「刷新状态」即时重查，仓库不可达时不误标为无效
 - **容器 commit 直推仓库**：受控端 `docker commit` 后直接 `tag` + `push` 到仓库（命名沿用 `工号-项目-镜像名-标签-备注-随机串` 规则派生），不再导出 tar 回传
 - **创建容器实时拉取**：管理端下发 `image.pull`，受控端 `docker pull` 并逐层回传拉取进度（SSE 推前端）
+- **同步到所有机器**（仅管理员）：镜像列表一键向全部**在线**实例下发 `image.pull`（离线实例标记跳过），批次与每实例任务落库（`image_sync_batch` / `image_sync_task`，每镜像同时仅一个进行中批次），抽屉实时展示各机器进度（SSE `imageSyncProgress`），终态含 拉取中/已存在/完成/失败/超时/离线跳过；刷新页面可恢复进行中批次视图
 - **无标记镜像补录**：管理员可枚举仓库中存在但系统未登记的镜像，补录元数据转为可用
 - **存量 tar 兼容**：已有 tarPath 记录仍走 file-transfer + `docker load`；公共镜像库定期同步（`image.sync_public`，默认 1h）保留
 
@@ -351,6 +352,8 @@ SMTP（默认 smtps/465）+ 品牌模板（Logo / 落款 / 品牌名可配）。
 ### 🧰 受控端环境准备
 受控端 GUI 分步引导：检测 Docker Desktop 是否安装 -> 引导下载安装器（`env.sync` 同步状态）-> 状态自检 -> 进入正常工作。另提供「配置私有镜像仓库」一键复制 `insecure-registries` 配置片段；受控端单实例运行，重复启动自动退出。`EnvFileController` 支持上传 ~600MB 的安装器文件（multipart 上限调到 2GB）。
 
+受控端本地行为要点：**Docker Desktop 看门狗**每 30 秒检查 daemon 可达性，不可达自动拉起（拉起后 60 秒冷却防启动期进程风暴，失败日志限流）；**存储池根目录默认 `D:\lab404`**（新装与存量空值自动补填，不锁定、仍可经管理员密码修改）；**配置文件仅内容变化才写盘**（心跳回包密码未变化不触发重写，手动编辑不再被覆盖，原子写防损坏）；登录失效（token 过期）时管理端统一返回 **HTTP 401 + 业务码 1003**，前端提示「登录已失效」并登出跳转（并发仅提示一次），与权限拒绝（403，提示真实原因不登出）明确区分。
+
 ---
 
 ## ⚙️ 关键配置项
@@ -386,7 +389,7 @@ SMTP（默认 smtps/465）+ 品牌模板（Logo / 落款 / 品牌名可配）。
 ## 🗄️ 数据库与迁移
 
 - DDL 由 **Flyway** 管理，`hibernate.ddl-auto=validate`（只校验不自动改表）
-- **35 个迁移脚本 `V1`~`V35`**，覆盖：基础 schema、访问控制、物理实例、资源分配、存储池、容器、镜像、端口分配、监控、工单、通知、资源配额、容器共享/备注、工单编号、系统信息、实例指纹、环境/OTA/实时、审计不可变、邮件通知、邮件触发、导师邀请注册、管理员邀请注册、容器内挂载点、**NAS 分配（nas_invitation / nas_registration）**、NewAPI 分配、忘记密码验证码、**私有仓库镜像分发（image_metadata 增 distribution/registry_valid/registry_checked_at）** 等
+- **36 个迁移脚本 `V1`~`V36`**，覆盖：基础 schema、访问控制、物理实例、资源分配、存储池、容器、镜像、端口分配、监控、工单、通知、资源配额、容器共享/备注、工单编号、系统信息、实例指纹、环境/OTA/实时、审计不可变、邮件通知、邮件触发、导师邀请注册、管理员邀请注册、容器内挂载点、**NAS 分配（nas_invitation / nas_registration）**、NewAPI 分配、忘记密码验证码、**私有仓库镜像分发（image_metadata 增 distribution/registry_valid/registry_checked_at）**、**镜像同步批次（image_sync_batch / image_sync_task）** 等
 - `baseline-on-migrate=true`，已有库可平滑接入
 
 ---

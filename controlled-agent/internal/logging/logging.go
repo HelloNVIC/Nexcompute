@@ -97,7 +97,15 @@ func (w *Writer) Write(p []byte) (int, error) {
 
 	today := time.Now().Format(dateFormat)
 	if w.current == nil || w.curDate != today {
-		if err := w.rotateLocked(today); err != nil {
+		err := w.rotateLocked(today)
+		if err != nil && !w.fallback {
+			// agent-defaults：根目录不可用（如默认 D:\lab404 所在盘缺失/不可写）时回退
+			// %LOCALAPPDATA% 重试。注意此处不得用 log.Printf——会经 MultiWriter 重入 Write 死锁。
+			fmt.Fprintf(os.Stderr, "[logging] 日志目录 %s 不可用（%v），回退 LOCALAPPDATA\n", w.logDir, err)
+			w.setRoot("")
+			err = w.rotateLocked(today)
+		}
+		if err != nil {
 			// 写文件失败兜底写 stderr，避免日志丢失致进程异常
 			fmt.Fprintf(os.Stderr, "[logging] 打开日志文件失败: %v\n", err)
 			return os.Stderr.Write(p)

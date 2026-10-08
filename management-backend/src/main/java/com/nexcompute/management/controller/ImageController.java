@@ -4,6 +4,7 @@ import com.nexcompute.management.common.ApiResponse;
 import com.nexcompute.management.domain.ImageMetadata;
 import com.nexcompute.management.security.RequirePermission;
 import com.nexcompute.management.service.ImageService;
+import com.nexcompute.management.service.ImageSyncService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -20,6 +21,7 @@ import java.util.List;
 public class ImageController {
 
     private final ImageService imageService;
+    private final ImageSyncService imageSyncService;
 
     /** 列出可见镜像（任务 9.4） */
     @GetMapping
@@ -67,6 +69,27 @@ public class ImageController {
     @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
     public ApiResponse<ImageMetadata> refreshValidity(@PathVariable Long id) {
         return ApiResponse.success(imageService.refreshValidity(id));
+    }
+
+    /** 同步到所有机器（V36，仅管理员）：为全部在线实例下发 image.pull，离线标跳过；返回批次视图。 */
+    @PostMapping("/{id}/sync-all")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageSyncService.SyncBatchView> syncAll(@PathVariable Long id) {
+        return ApiResponse.success(imageSyncService.syncAll(id));
+    }
+
+    /** 查询同步批次（V36）：刷新页面后恢复批次与任务状态视图。 */
+    @GetMapping("/sync-batches/{batchId}")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageSyncService.SyncBatchView> getSyncBatch(@PathVariable Long batchId) {
+        return ApiResponse.success(imageSyncService.viewOf(batchId));
+    }
+
+    /** 查询镜像进行中的同步批次（V36）：按钮点击时探测恢复；无进行中批次时 data 为 null。 */
+    @GetMapping("/{id}/sync-batches/active")
+    @RequirePermission(module = "image", action = RequirePermission.Action.EDIT)
+    public ApiResponse<ImageSyncService.SyncBatchView> activeSyncBatch(@PathVariable Long id) {
+        return ApiResponse.success(imageSyncService.activeBatchOf(id));
     }
 
     /** 推送命令（D3，操作列"上传"弹窗数据）：registryUrl + tag/push 命令由后端拼装。 */

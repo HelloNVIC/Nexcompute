@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, computed } from 'vue'
+import { onMounted, onUnmounted, reactive, ref, computed } from 'vue'
 import { Modal, message } from 'ant-design-vue'
 import dayjs from 'dayjs'
-import { imageApi, type ImageMetadata, type PushCommands, type UntaggedImage } from '@/api/image'
+import {
+  imageApi,
+  type ImageMetadata,
+  type PushCommands,
+  type UntaggedImage,
+  type ImageSyncTask,
+  type SyncBatchView,
+  type ImageSyncProgressEvent,
+} from '@/api/image'
 import { groupApi, type ResearchGroup } from '@/api/group'
 import { copyToClipboard } from '@/utils/clipboard'
+import { getSseClient } from '@/utils/sse'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -69,6 +78,81 @@ const claimForm = reactive({
   mountPoint: '',
   visibility: 'SHARED_TO_ALL' as 'SHARED_TO_ALL' | 'PRIVATE',
 })
+
+// ===== 同步到所有机器（V36，仅管理员）=====
+const syncDrawerVisible = ref(false)
+const syncView = ref<SyncBatchView | null>(null)
+let syncUnsubscribe: (() => void) | null = null
+
+function syncStatusLabel(s: string): { text: string; color: string } {
+  switch (s) {
+    case 'PENDING': return { text: '等待中', color: 'default' }
+    case 'PULLING': return { text: '拉取中', color: 'processing' }
+    case 'PULLED': return { text: '完成', color: 'green' }
+    case 'ALREADY_EXISTS': return { text: '已存在', color: 'cyan' }
+    case 'FAILED': return { text: '失败', color: 'red' }
+    case 'TIMEOUT': return { text: '超时', color: 'orange' }
+    case 'OFFLINE_SKIPPED': return { text: '离线跳过', color: 'default' }
+    default: return { text: s, color: 'default' }
+  }
+}
+
+// SSE 进度事件按实例更新对应行，并本地重算计数（无需再拉列表）
+function applySyncEvent(ev: ImageSyncProgressEvent): void {
+  const v = syncView.value
+  if (!v || ev.batchId !== v.batch.id) return
+  const target = v.tasks.find((t) => t.instanceNumber === ev.instanceNumber)
+  if (!target) return
+  target.status = ev.status as ImageSyncTask['status']
+  target.percent = ev.percent
+  if (ev.text !== undefined) target.lastText = ev.text
+  if (ev.error !== undefined) target.errorMessage = ev.error
+  v.pulled = v.tasks.filter((t) => t.status === 'PULLED').length
+  v.alreadyExists = v.tasks.filter((t) => t.status === 'ALREADY_EXISTS').length
+  v.failed = v.tasks.filter((t) => t.status === 'FAILED' || t.status === 'TIMEOUT').length
+  v.offlineSkipped = v.tasks.filter((t) => t.status === 'OFFLINE_SKIPPED').length
+  if (v.tasks.every((t) => t.status !== 'PENDING' && t.status !== 'PULLING')) {
+    v.batch.status = 'DONE'
+  }
+}
+
+function ensureSyncSubscription(): void {
+  if (syncUnsubscribe) return
+  syncUnsubscribe = getSseClient().on('imageSyncProgress', (data) => applySyncEvent(data as ImageSyncProgressEvent))
+}
+
+onUnmounted(() => {
+  syncUnsubscribe?.()
+  syncUnsubscribe = null
+})
+
+// 点击按钮：优先恢复该镜像进行中的批次（刷新场景），否则确认后发起新批次
+async function openSyncDrawer(image: ImageMetadata): Promise<void> {
+  ensureSyncSubscription()
+  try {
+    const active = await imageApi.getActiveSyncBatch(image.id)
+    if (active) {
+      syncView.value = active
+      syncDrawerVisible.value = true
+      return
+    }
+  } catch {
+    // 拦截器已提示
+  }
+  Modal.confirm({
+    title: `同步 ${image.name}:${image.tag} 到所有机器？`,
+    content: '将为全部当前在线的物理机下发镜像拉取指令（离线机器标记跳过），各机器拉取进度实时展示。',
+    okText: '开始同步',
+    onOk: async () => {
+      try {
+        syncView.value = await imageApi.syncAll(image.id)
+        syncDrawerVisible.value = true
+      } catch {
+        // 拦截器已提示（如已有批次进行中）
+      }
+    },
+  })
+}
 
 function openEdit(image: ImageMetadata): void {
   editForm.id = image.id
@@ -431,7 +515,7 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
           <a-table-column title="创建时间" :width="160">
             <template #default="{ record }">{{ dayjs(record.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
           </a-table-column>
-          <a-table-column title="操作" :width="300">
+          <a-table-column title="操作" :width="420">
             <template #default="{ record }">
               <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
               <a-button
@@ -444,6 +528,11 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
                 type="link" size="small"
                 @click="refreshValidity(record)"
               >刷新状态</a-button>
+              <a-button
+                v-if="record.distribution === 'REGISTRY' && record.registryValid && isAdmin"
+                type="link" size="small"
+                @click="openSyncDrawer(record)"
+              >同步到所有机器</a-button>
               <a-button
                 v-if="record.distribution !== 'REGISTRY' && record.tarPath"
                 type="link" size="small"
@@ -670,6 +759,55 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
         />
       </a-form>
     </a-modal>
+    <!-- 同步到所有机器抽屉（V36，仅管理员）：批次头计数 + 每实例进度表，SSE 实时更新 -->
+    <a-drawer v-model:open="syncDrawerVisible" title="镜像同步到所有机器" width="720">
+      <template v-if="syncView">
+        <a-descriptions :column="2" size="small" style="margin-bottom: 12px">
+          <a-descriptions-item label="镜像">{{ syncView.batch.imageRef }}</a-descriptions-item>
+          <a-descriptions-item label="批次状态">
+            <a-tag :color="syncView.batch.status === 'RUNNING' ? 'processing' : 'green'">
+              {{ syncView.batch.status === 'RUNNING' ? '进行中' : '已完成' }}
+            </a-tag>
+          </a-descriptions-item>
+          <a-descriptions-item label="汇总">
+            共 {{ syncView.total }} 台：完成 {{ syncView.pulled }} / 已存在 {{ syncView.alreadyExists }} /
+            失败 {{ syncView.failed }} / 离线跳过 {{ syncView.offlineSkipped }}
+          </a-descriptions-item>
+          <a-descriptions-item label="发起时间">
+            {{ dayjs(syncView.batch.createdAt).format('YYYY-MM-DD HH:mm:ss') }}
+          </a-descriptions-item>
+        </a-descriptions>
+        <a-table :data-source="syncView.tasks" row-key="id" :pagination="false" size="small">
+          <a-table-column title="机器" data-index="instanceNumber" :width="120" />
+          <a-table-column title="状态" :width="110">
+            <template #default="{ record }">
+              <a-tag :color="syncStatusLabel(record.status).color">{{ syncStatusLabel(record.status).text }}</a-tag>
+            </template>
+          </a-table-column>
+          <a-table-column title="进度" :width="200">
+            <template #default="{ record }">
+              <a-progress
+                v-if="record.status === 'PULLING' || record.status === 'PULLED'"
+                :percent="record.percent ?? 0"
+                size="small"
+              />
+              <span v-else style="color: #ccc">-</span>
+            </template>
+          </a-table-column>
+          <a-table-column title="详情">
+            <template #default="{ record }">
+              <a-tooltip v-if="record.errorMessage" :title="record.errorMessage">
+                <span style="color: #ff4d4f" class="sync-detail ellipsis">{{ record.errorMessage }}</span>
+              </a-tooltip>
+              <a-tooltip v-else-if="record.lastText" :title="record.lastText">
+                <span class="sync-detail ellipsis">{{ record.lastText }}</span>
+              </a-tooltip>
+              <span v-else style="color: #ccc">-</span>
+            </template>
+          </a-table-column>
+        </a-table>
+      </template>
+    </a-drawer>
   </div>
 </template>
 
@@ -678,5 +816,9 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.sync-detail {
+  display: inline-block;
+  max-width: 260px;
 }
 </style>

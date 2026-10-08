@@ -14,10 +14,29 @@ import (
 	"github.com/nexcompute/controlled-agent/internal/executil"
 )
 
+// 看门狗参数（agent-defaults：10 分钟提速至 30 秒；常量化便于测试与调整）。
+const (
+	watchdogInterval      = 30 * time.Second  // 检查周期
+	watchdogStartCooldown = 60 * time.Second  // 拉起冷却：两次拉起尝试的最小间隔
+	watchdogFailLogEvery  = 20                // 连续拉起失败每 N 次记一条日志（限流）
+)
+
 // dockerDesktopCandidates Docker Desktop.exe 常见安装路径（按优先级）。
+// 覆盖机器级安装（Program Files）与两种 per-user 安装形态：
+//   - %LOCALAPPDATA%\Docker\Docker\（经典 per-user）
+//   - %LOCALAPPDATA%\Programs\DockerDesktop\（新版安装器形态，实测
+//     C:\Users\Admin\AppData\Local\Programs\DockerDesktop）
+// agent-defaults 实测 DESKTOP-9IQCUKC per-user 安装不在原候选，致看门狗
+// "未在常见路径找到 Docker Desktop.exe"。
 func dockerDesktopCandidates() []string {
 	candidates := []string{
 		`C:\Program Files\Docker\Docker\Docker Desktop.exe`,
+	}
+	if la := os.Getenv("LOCALAPPDATA"); la != "" {
+		candidates = append(candidates,
+			filepath.Join(la, "Docker", "Docker", "Docker Desktop.exe"),
+			filepath.Join(la, "Programs", "DockerDesktop", "Docker Desktop.exe"),
+		)
 	}
 	if pf := os.Getenv("ProgramFiles"); pf != "" {
 		candidates = append(candidates, filepath.Join(pf, "Docker", "Docker", "Docker Desktop.exe"))
@@ -48,10 +67,10 @@ func StartDockerDesktop() error {
 	return fmt.Errorf("未在常见路径找到 Docker Desktop.exe")
 }
 
-// StartDockerDesktopWatchdog 启动 Docker Desktop 看门狗：每 10 分钟 Ping 一次本地
-// daemon，不可达则自动拉起 Docker Desktop。启动后不等待就绪，下个周期自然复查。
-// 首查延迟 2 分钟：开机自启场景给 Docker Desktop 正常启动留时间，避免误拉起。
-// m 为 nil 时（启动期初始化失败）自行重建客户端，仍失败则放弃并记日志。
+// StartDockerDesktopWatchdog 启动 Docker Desktop 看门狗：每 30 秒 Ping 一次本地
+// daemon，不可达则自动拉起 Docker Desktop（agent-defaults：自启动即检查，不设首查延迟；
+// 拉起冷却覆盖开机/启动期，防进程风暴）。m 为 nil 时（启动期初始化失败）自行重建客户端，
+// 仍失败则放弃并记日志。
 func StartDockerDesktopWatchdog(m *Manager) {
 	if m == nil {
 		var err error
@@ -62,28 +81,64 @@ func StartDockerDesktopWatchdog(m *Manager) {
 		}
 	}
 	go func() {
-		time.Sleep(2 * time.Minute)
-		watchdogCheck(m)
-		ticker := time.NewTicker(10 * time.Minute)
+		st := &watchdogState{wasHealthy: true} // 假定健康直至首次检测证明不可达，避免启动期噪声日志
+		watchdogCheck(m, st)
+		ticker := time.NewTicker(watchdogInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			watchdogCheck(m)
+			watchdogCheck(m, st)
 		}
 	}()
 }
 
-// watchdogCheck 单次检查：daemon 可达则无事；不可达则尝试启动 Docker Desktop。
-func watchdogCheck(m *Manager) {
+// watchdogState 看门狗循环状态（仅看门狗单 goroutine 访问，无需加锁）。
+type watchdogState struct {
+	lastStart  time.Time // 上次拉起尝试时间（冷却判定）
+	failStreak int       // 连续拉起失败次数（日志限流）
+	wasHealthy bool      // 上次检查 daemon 是否可达（状态转换记日志）
+}
+
+// watchdogCheck 单次检查：daemon 可达则无事（恢复时记一条日志）；
+// 不可达且冷却期满则尝试拉起 Docker Desktop。
+func watchdogCheck(m *Manager, st *watchdogState) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, pingErr := m.cli.Ping(ctx)
 	if pingErr == nil {
+		if !st.wasHealthy {
+			log.Printf("[docker-watchdog] Docker daemon 已恢复可达")
+			st.wasHealthy = true
+		}
+		st.failStreak = 0
 		return // daemon 正常
 	}
-	log.Printf("[docker-watchdog] Docker daemon 不可达（%v），尝试启动 Docker Desktop", pingErr)
+	if st.wasHealthy {
+		log.Printf("[docker-watchdog] Docker daemon 不可达（%v）", pingErr)
+		st.wasHealthy = false
+	}
+	if !shouldAttemptStart(time.Now(), st.lastStart) {
+		return // 拉起冷却期内（daemon 启动中），下个周期复查
+	}
+	st.lastStart = time.Now()
 	if err := StartDockerDesktop(); err != nil {
-		log.Printf("[docker-watchdog] 启动 Docker Desktop 失败: %v", err)
+		st.failStreak++
+		if shouldLogStartFailure(st.failStreak) {
+			log.Printf("[docker-watchdog] 启动 Docker Desktop 失败（连续第 %d 次）: %v", st.failStreak, err)
+		}
 		return
 	}
-	log.Printf("[docker-watchdog] 已拉起 Docker Desktop，等待其就绪（下个周期复查）")
+	st.failStreak = 0
+	log.Printf("[docker-watchdog] 已拉起 Docker Desktop，进入 %s 冷却等待就绪", watchdogStartCooldown)
+}
+
+// shouldAttemptStart 判定当前是否应尝试拉起：从未拉起过，或距上次拉起 ≥ 冷却期。
+// 冷却防 daemon 启动期（30-60 秒）每周期重复 spawn Docker Desktop.exe。
+func shouldAttemptStart(now, lastStart time.Time) bool {
+	return now.Sub(lastStart) >= watchdogStartCooldown
+}
+
+// shouldLogStartFailure 判定本次拉起失败是否记日志：第 1 次必记，其后每 N 次记一条
+// （防 Docker 未安装机器随检查周期刷错误日志）。
+func shouldLogStartFailure(failStreak int) bool {
+	return failStreak == 1 || failStreak%watchdogFailLogEvery == 0
 }

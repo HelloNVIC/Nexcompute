@@ -13,6 +13,8 @@ export type SseEventType =
   | 'storage.changed'
   // registry-image-distribution D6：创建容器时私有仓库镜像拉取实时进度
   | 'containerImagePull'
+  // V36 镜像同步到所有机器：每实例拉取进度/终态事件（发起管理员）
+  | 'imageSyncProgress'
 
 type EventHandler = (data: unknown) => void
 
