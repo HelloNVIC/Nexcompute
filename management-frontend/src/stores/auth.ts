@@ -34,6 +34,7 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = data.user
     localStorage.setItem('nex_token', data.token)
     localStorage.setItem('nex_user', JSON.stringify(data.user))
+    void fetchPermissions()
     // D9：新会话重置"下次再说"公告忽略列表（本会话已忽略的不再跨登录保留）
     localStorage.removeItem('dismissedAnnouncements')
   }
@@ -55,10 +56,25 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('nex_user')
   }
 
-  /** 权限矩阵：检查角色对某模块是否有某操作权限 */
-  function hasPermission(_module: string, _action: 'view' | 'edit' | 'delete'): boolean {
-    // TODO: 接入权限矩阵（任务 2.3/2.4 后由后端返回矩阵，前端缓存）
-    return true
+  /** 权限矩阵缓存（moduleCode -> 三操作）；复核反馈：原先为 TODO 桩恒 true，现真实现 */
+  const perms = ref<Record<string, { canView: boolean; canEdit: boolean; canDelete: boolean }> | null>(null)
+
+  /** 拉取当前用户角色的权限矩阵（登录后调用；动态 import 防循环依赖 request -> auth） */
+  async function fetchPermissions(): Promise<void> {
+    if (!token.value) return
+    try {
+      const { permissionApi } = await import('@/api/permission')
+      perms.value = await permissionApi.getMyPermissions()
+    } catch {
+      perms.value = null
+    }
+  }
+
+  /** 权限矩阵：检查当前角色对某模块是否有某操作权限（无缓存/未配置视为无权限） */
+  function hasPermission(module: string, action: 'view' | 'edit' | 'delete'): boolean {
+    const p = perms.value?.[module]
+    if (!p) return false
+    return action === 'view' ? p.canView : action === 'edit' ? p.canEdit : p.canDelete
   }
 
   return {
@@ -66,10 +82,12 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     isLoggedIn,
     role,
+    perms,
     login,
     setToken,
     setUser,
     logout,
+    fetchPermissions,
     hasPermission,
   }
 })

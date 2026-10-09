@@ -8,15 +8,25 @@ import com.nexcompute.management.common.ErrorCode;
 import com.nexcompute.management.domain.PhysicalInstance;
 import com.nexcompute.management.domain.ResearchGroup;
 import com.nexcompute.management.domain.UserRole;
+import com.nexcompute.management.repository.AgentCredentialRepository;
+import com.nexcompute.management.repository.AgentUpgradeTaskRepository;
+import com.nexcompute.management.repository.ContainerRepository;
+import com.nexcompute.management.repository.ImageSyncTaskRepository;
 import com.nexcompute.management.repository.MachineAllocationRepository;
+import com.nexcompute.management.repository.MonitoringHistoryRepository;
 import com.nexcompute.management.repository.PhysicalInstanceRepository;
+import com.nexcompute.management.repository.PortAllocationRepository;
 import com.nexcompute.management.repository.ResearchGroupRepository;
+import com.nexcompute.management.repository.StoragePoolMigrationRepository;
+import com.nexcompute.management.repository.StoragePoolRepository;
 import com.nexcompute.management.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +45,15 @@ public class PhysicalInstanceService {
     private final MachineAllocationRepository allocationRepository;
     private final ResearchGroupRepository groupRepository;
     private final AgentCommandService agentCommandService;
+    private final ContainerRepository containerRepository;
+    private final StoragePoolRepository poolRepository;
+    private final PortAllocationRepository portAllocationRepository;
+    private final StoragePoolMigrationRepository migrationRepository;
+    private final ImageSyncTaskRepository imageSyncTaskRepository;
+    private final AgentCredentialRepository credentialRepository;
+    private final MonitoringHistoryRepository monitoringHistoryRepository;
+    private final AgentUpgradeTaskRepository agentUpgradeTaskRepository;
+    private final JdbcTemplate jdbcTemplate;
 
     public PhysicalInstance getInstance(Long id) {
         return instanceRepository.findById(id)
@@ -118,6 +137,52 @@ public class PhysicalInstanceService {
         checkOnline(instance);
         log.info("[PowerShell] 管理员对实例 {} 执行命令: {}", instance.getInstanceNumber(), command);
         return dispatchCommand(instance, "system.powershell", Map.of("command", command));
+    }
+
+    /**
+     * 删除物理实例（instance-identity）。仅管理员；在线实例与被占用实例拒绝删除：
+     * 占用含 用户分配/容器/存储池/端口分配/迁移记录（聚合计数报错）；镜像同步任务为纯派生
+     * 记录，force=true 时跳过检查并级联删除（前端弹窗确认即强制）。级联清理 鉴权凭证/
+     * 监控历史/公共镜像同步状态（休眠表，无 JPA 实体）/升级任务记录/镜像同步任务。
+     */
+    @Audited(action = "INSTANCE_DELETE", targetType = "PHYSICAL_INSTANCE", targetIdExpr = "#id")
+    @Transactional
+    public void deleteInstance(Long id, boolean force) {
+        if (SecurityUtils.getCurrentRole() != UserRole.ADMIN) {
+            throw new BusinessException(ErrorCode.PERMISSION_DENIED, "删除物理实例仅管理员可执行");
+        }
+        PhysicalInstance instance = getInstance(id);
+        // 在线拒绝：在线机器删除后会经 4001 重注册机制复活为新行
+        if (agentCommandService.isAgentConnected(instance.getInstanceNumber())) {
+            throw new BusinessException(ErrorCode.CONFLICT, "实例在线（受控端已连接），请先在该机器退出受控端后再删除");
+        }
+        // 占用检查（聚合计数）；镜像同步任务仅在非强制时拦截
+        List<String> blockers = new ArrayList<>();
+        long n = allocationRepository.countByInstanceId(id);
+        if (n > 0) blockers.add("已分配 " + n + " 个用户");
+        n = containerRepository.countByInstanceId(id);
+        if (n > 0) blockers.add(n + " 个容器");
+        n = poolRepository.countByInstanceId(id);
+        if (n > 0) blockers.add(n + " 个存储池");
+        n = portAllocationRepository.countByInstanceId(id);
+        if (n > 0) blockers.add(n + " 条端口分配");
+        n = migrationRepository.countBySourceInstanceIdOrTargetInstanceId(id, id);
+        if (n > 0) blockers.add(n + " 条迁移记录");
+        if (!force) {
+            n = imageSyncTaskRepository.countByInstanceId(id);
+            if (n > 0) blockers.add(n + " 条镜像同步任务（可在确认删除时强制清除）");
+        }
+        if (!blockers.isEmpty()) {
+            throw new BusinessException(ErrorCode.CONFLICT, "实例被占用，无法删除：" + String.join("、", blockers));
+        }
+        // 级联清理（镜像同步任务为派生记录，force 与否都随实例删除）
+        credentialRepository.deleteByInstanceId(id);
+        monitoringHistoryRepository.deleteByInstanceId(id);
+        jdbcTemplate.update("DELETE FROM public_image_sync WHERE instance_id = ?", id);
+        agentUpgradeTaskRepository.deleteByInstanceId(id);
+        imageSyncTaskRepository.deleteByInstanceId(id);
+        instanceRepository.delete(instance);
+        log.info("[Instance] 已删除物理实例: number={} id={} force={}", instance.getInstanceNumber(), id, force);
     }
 
     private void checkOnline(PhysicalInstance instance) {

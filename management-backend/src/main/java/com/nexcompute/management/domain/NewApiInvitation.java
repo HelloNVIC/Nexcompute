@@ -47,7 +47,7 @@ public class NewApiInvitation {
     private Instant expiresAt;
 
     /** 创建者（管理员 app_user.id） */
-    @Column(name = "created_by", nullable = false)
+    @Column(name = "created_by") // V38 改可空：创建者删除后置空
     private Long createdBy;
 
     /** 创建时间 */

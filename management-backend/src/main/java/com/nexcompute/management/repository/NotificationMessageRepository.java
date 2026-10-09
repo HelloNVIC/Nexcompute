@@ -23,6 +23,9 @@ public interface NotificationMessageRepository extends JpaRepository<Notificatio
     /** 公告已读/未读名单：按 type=ANNOUNCEMENT + refId(公告 id) 查全部通知记录 */
     List<NotificationMessage> findByTypeAndRefId(NotificationType type, Long refId);
 
+    /** 删除该用户的全部消息（V38 用户删除级联：收件人没了消息无意义） */
+    void deleteByUserId(Long userId);
+
     @Modifying
     @Query("UPDATE NotificationMessage n SET n.isRead = true, n.readAt = CURRENT_TIMESTAMP WHERE n.id = :id AND n.userId = :userId")
     int markAsRead(Long id, Long userId);

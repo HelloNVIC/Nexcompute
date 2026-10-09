@@ -42,7 +42,7 @@
 |---|---|---|
 | 🔌 | **NAT 穿透式受控端** | 心跳（HTTP）+ 命令（WebSocket）双通道全出站，受控端不开任何入站端口 |
 | 🐳 | **容器全生命周期** | 表单创建（SSH 密码 / CPU·内存限制 / 端口映射）、启停重启删、容器级 SSH 密码即时重置 |
-| 🖥️ | **物理实例管理** | 自动注册编号、状态监控、远程重启 / 息屏 / PowerShell |
+| 🖥️ | **物理实例管理** | 指纹身份去重（SMBIOS/机器码，同机不重复注册）、自动注册编号、状态监控、远程重启 / 息屏 / PowerShell、删除（在线/占用拦截） |
 | 💾 | **存储池** | 项目级命名隔离、共享授权、跨机迁移（断点续传） |
 | 📦 | **镜像管理** | 私有仓库登记 + 推送命令引导、有效性检查、无标记镜像补录、容器 commit 直推仓库、创建容器实时拉取进度、存量 tar 兼容 |
 | 🗄️ | **NAS 分配** | 邀请门控注册 + 管理员审批开通 TrueNAS 用户，AES-GCM 暂存密码、提交/激活/拒绝邮件通知、pending 过期扫描 |
@@ -118,7 +118,7 @@ Nexcompute/
 │       │   ├── security/      # JWT / 权限矩阵 / @RequirePermission
 │       │   ├── service/       # 47 个业务服务（含 TrueNasClient / NewApiClient / NasPasswordEncryptor）
 │       │   └── sse/           # 服务端推送
-│       └── resources/db/migration/   # Flyway V1~V36 迁移脚本
+│       └── resources/db/migration/   # Flyway V1~V37 迁移脚本
 ├── management-frontend/     # Vue 3 + TypeScript + Vite
 │   └── src/{views,api,stores,components,router,layouts,types,utils}
 ├── controlled-agent/        # Go 受控端（托盘 GUI + 心跳 + WS + Docker）
@@ -389,7 +389,7 @@ SMTP（默认 smtps/465）+ 品牌模板（Logo / 落款 / 品牌名可配）。
 ## 🗄️ 数据库与迁移
 
 - DDL 由 **Flyway** 管理，`hibernate.ddl-auto=validate`（只校验不自动改表）
-- **36 个迁移脚本 `V1`~`V36`**，覆盖：基础 schema、访问控制、物理实例、资源分配、存储池、容器、镜像、端口分配、监控、工单、通知、资源配额、容器共享/备注、工单编号、系统信息、实例指纹、环境/OTA/实时、审计不可变、邮件通知、邮件触发、导师邀请注册、管理员邀请注册、容器内挂载点、**NAS 分配（nas_invitation / nas_registration）**、NewAPI 分配、忘记密码验证码、**私有仓库镜像分发（image_metadata 增 distribution/registry_valid/registry_checked_at）**、**镜像同步批次（image_sync_batch / image_sync_task）** 等
+- **38 个迁移脚本 `V1`~`V38`**，覆盖：基础 schema、访问控制、物理实例、资源分配、存储池、容器、镜像、端口分配、监控、工单、通知、资源配额、容器共享/备注、工单编号、系统信息、实例指纹、环境/OTA/实时、审计不可变、邮件通知、邮件触发、导师邀请注册、管理员邀请注册、容器内挂载点、**NAS 分配（nas_invitation / nas_registration）**、NewAPI 分配、忘记密码验证码、**私有仓库镜像分发（image_metadata 增 distribution/registry_valid/registry_checked_at）**、**镜像同步批次（image_sync_batch / image_sync_task）**、**实例身份去重（V37：存量重复合并 + smbios_uuid/machine_code 部分唯一索引）**、**用户删除外键链（V38：操作人类列去 NOT NULL + ON DELETE SET NULL）** 等
 - `baseline-on-migrate=true`，已有库可平滑接入
 
 ---

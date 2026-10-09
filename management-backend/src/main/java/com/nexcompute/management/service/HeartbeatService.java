@@ -204,11 +204,12 @@ public class HeartbeatService {
                 return reuseInstance(existing.get(), request, smbiosUUID, "uuid=" + smbiosUUID);
             }
         }
-        // 2. 回退：MAC + MachineGuid
-        if (mac != null && !mac.isBlank() && machineCode != null && !machineCode.isBlank()) {
-            var existing = instanceRepository.findByMacAndMachineCode(mac, machineCode);
+        // 2. 回退：机器码（MachineGuid）单独命中即复用（instance-identity：不再要求 MAC 同时
+        //    匹配——MAC 采集失败时不再整体放弃匹配，修复同机重复注册）
+        if (machineCode != null && !machineCode.isBlank()) {
+            var existing = instanceRepository.findByMachineCode(machineCode);
             if (existing.isPresent()) {
-                return reuseInstance(existing.get(), request, smbiosUUID, "mac=" + mac);
+                return reuseInstance(existing.get(), request, smbiosUUID, "machineCode=" + machineCode);
             }
         }
 

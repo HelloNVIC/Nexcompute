@@ -235,6 +235,7 @@ class ImageServiceTest {
 
     @Test
     void refreshValidity_existsAndUploading_promotesReady() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.ADMIN);
         ImageMetadata img = ImageMetadata.builder().id(1L).name("lab404-jupyter").tag("0.1")
                 .status("UPLOADING").distribution(ImageService.DISTRIBUTION_REGISTRY).build();
         when(imageRepository.findById(1L)).thenReturn(Optional.of(img));
@@ -250,6 +251,7 @@ class ImageServiceTest {
 
     @Test
     void refreshValidity_notExists_keepsStatus() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.ADMIN);
         ImageMetadata img = ImageMetadata.builder().id(1L).name("lab404-jupyter").tag("0.1")
                 .status("UPLOADING").distribution(ImageService.DISTRIBUTION_REGISTRY).build();
         when(imageRepository.findById(1L)).thenReturn(Optional.of(img));
@@ -264,6 +266,7 @@ class ImageServiceTest {
 
     @Test
     void refreshValidity_registryUnreachable_throwsAndKeepsConclusion() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.ADMIN);
         ImageMetadata img = ImageMetadata.builder().id(1L).name("lab404-jupyter").tag("0.1")
                 .status("UPLOADING").registryValid(true).registryCheckedAt(Instant.now()).build();
         when(imageRepository.findById(1L)).thenReturn(Optional.of(img));
@@ -364,5 +367,59 @@ class ImageServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .matches(e -> ((BusinessException) e).getErrorCode() == ErrorCode.PERMISSION_DENIED);
         verify(imageRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteImage_adminDeletesAnyImage() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.ADMIN);
+        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(7L);
+        ImageMetadata img = ImageMetadata.builder().id(2L).ownerId(99L).name("x").tag("1")
+                .status("READY").build(); // 无 tarPath，纯元数据删除
+        when(imageRepository.findById(2L)).thenReturn(Optional.of(img));
+
+        imageService.deleteImage(2L);
+
+        verify(imageRepository).delete(img);
+    }
+
+    @Test
+    void deleteImage_ownerDeletesOwnImage() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.STUDENT);
+        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(9L);
+        ImageMetadata img = ImageMetadata.builder().id(2L).ownerId(9L).name("x").tag("1")
+                .status("READY").build();
+        when(imageRepository.findById(2L)).thenReturn(Optional.of(img));
+
+        imageService.deleteImage(2L);
+
+        verify(imageRepository).delete(img);
+    }
+
+    @Test
+    void deleteImage_nonOwnerRejected() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.STUDENT);
+        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(9L);
+        ImageMetadata img = ImageMetadata.builder().id(2L).ownerId(99L).name("x").tag("1")
+                .status("READY").build(); // 他人镜像
+        when(imageRepository.findById(2L)).thenReturn(Optional.of(img));
+
+        assertThatThrownBy(() -> imageService.deleteImage(2L))
+                .isInstanceOf(BusinessException.class)
+                .matches(e -> ((BusinessException) e).getErrorCode() == ErrorCode.PERMISSION_DENIED);
+        verify(imageRepository, never()).delete(any(ImageMetadata.class));
+    }
+
+    @Test
+    void deleteImage_ownerlessImage_nonAdminRejected() {
+        securityUtilsMock.when(SecurityUtils::getCurrentRole).thenReturn(UserRole.MENTOR);
+        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(9L);
+        ImageMetadata img = ImageMetadata.builder().id(2L).name("legacy").tag("latest")
+                .status("READY").build(); // 归属为空的历史镜像
+        when(imageRepository.findById(2L)).thenReturn(Optional.of(img));
+
+        assertThatThrownBy(() -> imageService.deleteImage(2L))
+                .isInstanceOf(BusinessException.class)
+                .matches(e -> ((BusinessException) e).getErrorCode() == ErrorCode.PERMISSION_DENIED);
+        verify(imageRepository, never()).delete(any(ImageMetadata.class));
     }
 }

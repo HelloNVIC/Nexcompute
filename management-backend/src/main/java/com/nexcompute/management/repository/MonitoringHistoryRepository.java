@@ -20,4 +20,9 @@ public interface MonitoringHistoryRepository extends JpaRepository<MonitoringHis
     @Modifying
     @Query("DELETE FROM MonitoringHistory m WHERE m.recordedAt < :before")
     int deleteOlderThan(Instant before);
+
+    /** 按实例批量删除监控历史（instance-identity：删除实例级联清理，@Modifying 避免逐行加载） */
+    @Modifying
+    @Query("DELETE FROM MonitoringHistory m WHERE m.instanceId = :instanceId")
+    int deleteByInstanceId(Long instanceId);
 }

@@ -87,6 +87,23 @@ async function monitoringApiRecent(id: number) {
   )
 }
 
+// 删除物理实例（instance-identity，仅管理员；在线与被占用实例由后端拒绝并提示原因）
+// 镜像同步任务为纯派生记录：确认删除即强制（force），任务行随实例一并清除
+function confirmDelete(inst: PhysicalInstance): void {
+  Modal.confirm({
+    title: `确认删除物理实例 ${inst.instanceNumber}（${inst.machineName ?? ''}）？`,
+    content: '仅离线且未被占用（无用户分配、容器、存储池、端口分配与迁移记录）的实例可删除；其凭证、监控历史及镜像同步任务记录将一并清除，不可恢复。',
+    okText: '删除',
+    okType: 'danger',
+    onOk: async () => {
+      await instanceApi.delete(inst.id, true)
+      message.success('物理实例已删除')
+      selectedId.value = undefined
+      await load()
+    },
+  })
+}
+
 function subscribeSse(): void {
   unsubSse?.()
   const sse = getSseClient()
@@ -352,6 +369,7 @@ function formatBytes(bytes: number): string {
               <a-button size="small" @click="confirmRestart(current)">重启</a-button>
               <a-button size="small" @click="confirmScreenOff(current)">息屏</a-button>
               <a-button size="small" @click="showPowerShell(current)">PowerShell</a-button>
+              <a-button size="small" danger @click="confirmDelete(current)">删除实例</a-button>
             </a-space>
           </a-card>
         </div>

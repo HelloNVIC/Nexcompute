@@ -34,4 +34,7 @@ public interface MachineAllocationRepository extends JpaRepository<MachineAlloca
 
     /** 由某用户分配的记录（platform-refinements #2：导师"已分配机器"显示自己分配的） */
     List<MachineAllocation> findByAllocatedBy(Long allocatedBy);
+
+    /** 该实例的用户分配数（instance-identity：删除前占用检查） */
+    long countByInstanceId(Long instanceId);
 }

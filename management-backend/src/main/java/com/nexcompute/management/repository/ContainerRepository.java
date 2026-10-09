@@ -22,4 +22,7 @@ public interface ContainerRepository extends JpaRepository<Container, Long> {
 
     /** 查找使用某存储池且运行中的容器 */
     List<Container> findByStoragePoolIdAndStatus(Long storagePoolId, String status);
+
+    /** 该实例的容器数（instance-identity：删除前占用检查） */
+    long countByInstanceId(Long instanceId);
 }

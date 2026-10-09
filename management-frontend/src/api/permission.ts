@@ -14,6 +14,8 @@ export interface PermissionMatrixItem {
 }
 
 export const permissionApi = {
+  /** 当前登录用户角色的全模块权限（moduleCode -> view/edit/delete；前端按矩阵渲染菜单/按钮） */
+  getMyPermissions: () => http.get<Record<string, Perm>>('/permissions/my'),
   getMatrix: () => http.get<PermissionMatrixItem[]>('/admin/permissions'),
   update: (data: { role: string; moduleCode: string; canView: boolean; canEdit: boolean; canDelete: boolean }) =>
     http.put('/admin/permissions', data),

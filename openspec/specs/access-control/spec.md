@@ -39,6 +39,12 @@ TBD - created by archiving change build-nexcompute-platform. Update Purpose afte
 - **AND** 该角色用户的前端菜单与按钮按配置渲染
 - **AND** 该角色用户的后端 API 调用按配置鉴权
 
+#### Scenario: 矩阵未授权的模块前端不显示入口
+- **WHEN** 权限矩阵未授予某角色某模块的查看权限（如学生未被授予审计日志）
+- **THEN** 该角色前端不展示该模块的菜单入口（如"操作审计"）
+- **AND** 直接访问该模块路由被重定向回首页
+- **AND** 该模块的后端 API 调用被拒绝
+
 #### Scenario: 修改需确认生效
 - **WHEN** 管理员修改权限矩阵并触发保存
 - **THEN** 系统弹出确认提示要求确认修改

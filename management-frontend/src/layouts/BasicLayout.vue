@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { Modal } from 'ant-design-vue'
 import {
@@ -30,11 +30,18 @@ const auth = useAuthStore()
 
 const collapsed = ref(false)
 
+// 复核反馈：权限矩阵缓存（刷新页面后 store 内存清空，菜单渲染依赖此拉取）
+onMounted(() => {
+  void auth.fetchPermissions()
+})
+
 interface MenuItem {
   key: string
   label: string
   icon?: unknown
   roles?: UserRole[]
+  /** 权限矩阵模块（存在时菜单可见性按矩阵 VIEW 权限过滤，复核反馈：矩阵未授权不显示入口） */
+  module?: string
   children?: MenuItem[]
 }
 
@@ -67,14 +74,17 @@ const menus = computed<MenuItem[]>(() => {
     { key: '/admin/agent-upgrade', label: '受控端升级', icon: DesktopOutlined, roles: ['ADMIN'] },
     { key: '/admin/agent-logs', label: '受控端日志', icon: DesktopOutlined, roles: ['ADMIN'] },
     { key: '/admin/audit-switch', label: '审计开关', icon: SafetyCertificateOutlined, roles: ['ADMIN'] },
-    // platform-audit-logging-ux：审计日志三角色可见（后端按 mentorIdAtOp 快照过滤）
-    { key: '/audit-logs', label: '操作审计', icon: SafetyCertificateOutlined },
+    // 审计日志：可见性按权限矩阵（后端按 mentorIdAtOp 快照过滤内容；矩阵未授 VIEW 的角色不显示入口）
+    { key: '/audit-logs', label: '操作审计', icon: SafetyCertificateOutlined, module: 'audit' },
     { key: '/announcements', label: '公告', icon: NotificationOutlined, roles: ['STUDENT', 'MENTOR'] },
     { key: '/announcements/manage', label: '公告管理', icon: NotificationOutlined, roles: ['ADMIN'] },
     { key: '/profile', label: '用户信息', icon: UserOutlined },
     { key: '/system-info', label: '系统信息', icon: SafetyCertificateOutlined },
   ]
-  return all.filter((m) => !m.roles || (role && m.roles.includes(role)))
+  return all.filter((m) =>
+    (!m.roles || (role && m.roles.includes(role)))
+    && (!m.module || auth.hasPermission(m.module, 'view')),
+  )
 })
 
 const selectedKeys = computed(() => {

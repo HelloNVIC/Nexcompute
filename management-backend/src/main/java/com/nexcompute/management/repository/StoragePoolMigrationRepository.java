@@ -10,4 +10,7 @@ import java.util.Optional;
 public interface StoragePoolMigrationRepository extends JpaRepository<StoragePoolMigration, Long> {
 
     Optional<StoragePoolMigration> findByPoolId(Long poolId);
+
+    /** 以某实例为源或目标的迁移记录数（instance-identity：删除前占用检查） */
+    long countBySourceInstanceIdOrTargetInstanceId(Long sourceInstanceId, Long targetInstanceId);
 }

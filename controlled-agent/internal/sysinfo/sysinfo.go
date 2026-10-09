@@ -178,22 +178,36 @@ func CollectMachineFingerprint() MachineFingerprint {
 	return fp
 }
 
-// collectSmbiosUUID 采集主板 BIOS SMBIOS UUID（D14 主指纹）。
-// 经 wmic csproduct get UUID；非 Windows 或失败/全 0 返回空串（回退 MachineGuid/MAC）。
+// collectSmbiosUUID 采集主板 BIOS SMBIOS UUID（D14 主指纹；instance-identity 治本）。
+// 优先 PowerShell CIM——wmic 自 Windows 11 25H2 起被移除，仅靠 wmic 会致主指纹在
+// 新型系统上静默缺失（实验室机队已全为 25H2）；失败/为空回退 wmic（老系统兜底）。
 func collectSmbiosUUID() string {
+	if uuid := collectSmbiosUUIDVia("powershell",
+		[]string{"-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystemProduct).UUID"}); uuid != "" {
+		return uuid
+	}
+	return collectSmbiosUUIDVia("wmic", []string{"csproduct", "get", "UUID"})
+}
+
+// collectSmbiosUUIDVia 以指定命令采集 SMBIOS UUID。
+func collectSmbiosUUIDVia(name string, args []string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	cmd := executil.HideWindow(exec.CommandContext(ctx, "wmic", "csproduct", "get", "UUID"))
-	out, err := cmd.Output()
+	out, err := executil.HideWindow(exec.CommandContext(ctx, name, args...)).Output()
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	return parseSmbiosUUIDOutput(string(out))
+}
+
+// parseSmbiosUUIDOutput 解析采集命令输出：跳过空行与表头（wmic 带 "UUID" 表头，CIM 输出裸值），
+// 全 0 视为缺失（虚拟机/部分主板）返回空串。
+func parseSmbiosUUIDOutput(out string) string {
+	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.EqualFold(line, "UUID") {
 			continue
 		}
-		// 全 0 视为缺失（虚拟机/部分主板）
 		if strings.Count(strings.ReplaceAll(line, "-", ""), "0") == len(strings.ReplaceAll(line, "-", "")) {
 			return ""
 		}

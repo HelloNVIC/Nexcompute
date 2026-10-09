@@ -37,7 +37,7 @@ public class StoragePoolMigration {
     @Column(nullable = false, length = 20)
     private String status; // PENDING / TRANSFERRING / COMPLETED / FAILED / CONFIRMED
 
-    @Column(name = "initiated_by", nullable = false)
+    @Column(name = "initiated_by") // V38 改可空：发起人删除后置空
     private Long initiatedBy;
 
     @CreationTimestamp

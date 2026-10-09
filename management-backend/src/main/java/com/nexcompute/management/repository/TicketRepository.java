@@ -12,6 +12,9 @@ public interface TicketRepository extends JpaRepository<Ticket, Long> {
 
     List<Ticket> findBySubmitterIdOrderByCreatedAtDesc(Long submitterId);
 
+    /** 该用户提交的工单数（V38 用户删除占用检查） */
+    long countBySubmitterId(Long submitterId);
+
     List<Ticket> findByGroupIdOrderByCreatedAtDesc(Long groupId);
 
     List<Ticket> findByStatusOrderByCreatedAtDesc(String status);

@@ -255,12 +255,24 @@ public class ImageSyncService {
         }
     }
 
+    /** 批次完结：置 DONE；失败任务不积压——删除本批次 FAILED/TIMEOUT 任务行（进行中仍实时
+     *  可见，完结后清除），全失败/零任务批次连批次行一并删除，库里只留成功历史。 */
     private void finishBatch(Long batchId) {
         batchRepository.findById(batchId).ifPresent(b -> {
             b.setStatus(ImageSyncBatch.STATUS_DONE);
             b.setFinishedAt(Instant.now());
             batchRepository.save(b);
         });
+        for (ImageSyncTask t : taskRepository.findByBatchIdOrderByIdAsc(batchId)) {
+            if (ImageSyncTask.STATUS_FAILED.equals(t.getStatus())
+                    || ImageSyncTask.STATUS_TIMEOUT.equals(t.getStatus())) {
+                taskRepository.delete(t);
+            }
+        }
+        // 全失败（或零任务）批次不留批次行
+        if (taskRepository.findByBatchIdOrderByIdAsc(batchId).isEmpty()) {
+            batchRepository.findById(batchId).ifPresent(batchRepository::delete);
+        }
     }
 
     /** 推送 imageSyncProgress SSE 事件（发起管理员；丢帧不影响库内状态） */

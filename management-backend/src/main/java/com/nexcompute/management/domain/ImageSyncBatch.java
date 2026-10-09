@@ -32,7 +32,7 @@ public class ImageSyncBatch {
     @Column(name = "image_ref", nullable = false, length = 500)
     private String imageRef;
 
-    @Column(name = "initiated_by", nullable = false)
+    @Column(name = "initiated_by") // V38 改可空：发起人删除后置空
     private Long initiatedBy;
 
     @Column(nullable = false, length = 20)

@@ -47,6 +47,16 @@ public class PhysicalInstanceController {
         return ApiResponse.success(instanceService.updateInstanceNumber(id, request.getNumber()));
     }
 
+    /** 删除物理实例（instance-identity，仅管理员）：在线与被占用实例拒绝；force=true 时
+     *  跳过镜像同步任务检查并连同删除（同步任务为纯派生记录） */
+    @DeleteMapping("/{id}")
+    @RequirePermission(module = "physical-instance", action = RequirePermission.Action.DELETE)
+    public ApiResponse<Void> delete(@PathVariable Long id,
+                                    @RequestParam(defaultValue = "false") boolean force) {
+        instanceService.deleteInstance(id, force);
+        return ApiResponse.success();
+    }
+
     /** 远程重启（任务 6.3） */
     @PostMapping("/{id}/restart")
     @RequirePermission(module = "physical-instance", action = RequirePermission.Action.EDIT)

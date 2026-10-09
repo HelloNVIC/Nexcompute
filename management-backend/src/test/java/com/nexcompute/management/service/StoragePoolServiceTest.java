@@ -76,6 +76,22 @@ class StoragePoolServiceTest {
     }
 
     @Test
+    void createPool_offlineInstance_rejectedWithoutPersisting() {
+        // 离线机器（受控端未连接）拒绝建池，且不落库半成品池（复核反馈：离线不可创建存储池）
+        PhysicalInstance inst = PhysicalInstance.builder()
+                .id(2L).instanceNumber("02").status("OFFLINE")
+                .storageRoot("D:/lab404").build();
+        when(instanceRepository.findById(2L)).thenReturn(Optional.of(inst));
+        when(agentCommandService.isAgentConnected("02")).thenReturn(false);
+
+        assertThatThrownBy(() -> storagePoolService.createPool(2L, "bert"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不在线");
+        verify(poolRepository, never()).save(any(StoragePool.class));
+        verify(agentCommandService, never()).sendCommand(anyString(), anyString(), any(), anyLong());
+    }
+
+    @Test
     void revokeShare_noRunningContainers_succeeds() {
         when(poolRepository.findById(1L)).thenReturn(Optional.of(testPool));
         when(containerRepository.findByStoragePoolIdAndStatus(1L, "RUNNING"))

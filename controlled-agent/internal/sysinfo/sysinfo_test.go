@@ -88,3 +88,23 @@ func TestProcessInfo_Structure(t *testing.T) {
 		t.Error("name mismatch")
 	}
 }
+
+// TestParseSmbiosUUIDOutput instance-identity：CIM/wmic 两种输出形态解析与全 0 判缺。
+func TestParseSmbiosUUIDOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"wmic 带表头", "UUID\r\n4C4C4544-0042-3510-8054-B7C04F4E3532\r\n\r\n", "4C4C4544-0042-3510-8054-B7C04F4E3532"},
+		{"CIM 裸值", "4C4C4544-0042-3510-8054-B7C04F4E3533\r\n", "4C4C4544-0042-3510-8054-B7C04F4E3533"},
+		{"全 0 视为缺失", "00000000-0000-0000-0000-000000000000\r\n", ""},
+		{"空输出", "", ""},
+		{"仅表头", "UUID\r\n", ""},
+	}
+	for _, tc := range cases {
+		if got := parseSmbiosUUIDOutput(tc.in); got != tc.want {
+			t.Errorf("%s: parseSmbiosUUIDOutput(%q) = %q, want %q", tc.name, tc.in, got, tc.want)
+		}
+	}
+}

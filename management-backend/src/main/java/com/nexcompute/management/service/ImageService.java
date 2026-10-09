@@ -261,6 +261,8 @@ public class ImageService {
      */
     @Transactional
     public ImageMetadata refreshValidity(Long imageId) {
+        // 复核反馈：刷新会改写镜像记录（validity/status），与编辑同级——管理员可刷任意，他人仅自己的
+        checkOwnership(imageId);
         ImageMetadata image = getImage(imageId);
         boolean exists = registryClient.exists(image.getName(), image.getTag());
         image.setRegistryValid(exists);
@@ -506,6 +508,8 @@ public class ImageService {
     @Audited(action = "IMAGE_DELETE", targetType = "IMAGE", targetIdExpr = "#id")
     @Transactional
     public void deleteImage(Long id) {
+        // 复核反馈：管理员可删所有镜像，其他角色仅可删除自己的（原先无校验，任何角色可删任意镜像）
+        checkOwnership(id);
         ImageMetadata image = getImage(id);
         // 删除 tar 文件
         if (image.getTarPath() != null) {
@@ -707,9 +711,10 @@ public class ImageService {
 
     private void checkOwnership(Long imageId) {
         ImageMetadata image = getImage(imageId);
+        // 归属为空（历史/公共镜像）仅管理员可操作；非管理员须为所有者本人
         if (SecurityUtils.getCurrentRole() != UserRole.ADMIN
-                && !image.getOwnerId().equals(SecurityUtils.getCurrentUserId())) {
-            throw new BusinessException(ErrorCode.PERMISSION_DENIED, "仅所有者可操作");
+                && (image.getOwnerId() == null || !image.getOwnerId().equals(SecurityUtils.getCurrentUserId()))) {
+            throw new BusinessException(ErrorCode.PERMISSION_DENIED, "仅所有者与管理员可操作");
         }
     }
 

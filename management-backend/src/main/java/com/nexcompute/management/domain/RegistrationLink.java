@@ -29,7 +29,7 @@ public class RegistrationLink {
     @Column(name = "group_id")
     private Long groupId; // 关联课题组（学生链接=导师课题组；导师链接为空，注册时建组）
 
-    @Column(name = "creator_id", nullable = false)
+    @Column(name = "creator_id") // V38 改可空：创建者删除后置空
     private Long creatorId; // 创建者（导师=自己；导师邀请链接=管理员）
 
     @Column(name = "remaining_count", nullable = false)

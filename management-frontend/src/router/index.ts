@@ -188,7 +188,7 @@ const routes: RouteRecordRaw[] = [
         path: 'audit-logs',
         name: 'audit-logs',
         component: () => import('@/views/admin/AuditLogView.vue'),
-        meta: { title: '操作审计' },
+        meta: { title: '操作审计', module: 'audit' },
       },
       // 受控端日志查看（管理员）
       {
@@ -233,7 +233,7 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (to.meta.public) return true
 
@@ -244,6 +244,18 @@ router.beforeEach((to) => {
   const requiredRoles = to.meta.roles as string[] | undefined
   if (requiredRoles && auth.role && !requiredRoles.includes(auth.role)) {
     return { name: 'dashboard' }
+  }
+
+  // 权限矩阵模块校验（复核反馈：矩阵未授权 VIEW 的模块直接拦截路由，如学生访问操作审计）
+  // 硬刷新直接进入该路由时守卫先于菜单拉取执行，此处懒拉取保证判定有据
+  const requiredModule = to.meta.module as string | undefined
+  if (requiredModule) {
+    if (!auth.perms) {
+      await auth.fetchPermissions()
+    }
+    if (!auth.hasPermission(requiredModule, 'view')) {
+      return { name: 'dashboard' }
+    }
   }
 
   if (to.meta.title) {

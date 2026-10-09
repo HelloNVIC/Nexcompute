@@ -47,7 +47,7 @@ public class Announcement {
     @Column(nullable = false, length = 20)
     private String status; // PENDING / PUBLISHED
 
-    @Column(name = "author_id", nullable = false)
+    @Column(name = "author_id") // V38 改可空：作者删除后置空，展示回退 author_name
     private Long authorId;
 
     @Column(name = "author_name", length = 100)

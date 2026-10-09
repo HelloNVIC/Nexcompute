@@ -20,5 +20,9 @@ public interface PhysicalInstanceRepository extends JpaRepository<PhysicalInstan
     /** 按 SMBIOS UUID 查找（D14：主指纹去重） */
     Optional<PhysicalInstance> findBySmbiosUuid(String smbiosUuid);
 
+    /** 按机器码（MachineGuid）单独查找（instance-identity：SMBIOS 缺失时的身份判定，
+     *  不再要求 MAC 同时匹配——MAC 采集失败不再放弃去重） */
+    Optional<PhysicalInstance> findByMachineCode(String machineCode);
+
     List<PhysicalInstance> findByStatus(String status);
 }

@@ -250,6 +250,7 @@ function fmtSize(bytes: number): string {
       >
         <a-table-column title="编号" data-index="instanceNumber" :width="80" />
         <a-table-column title="机器名" data-index="machineName" />
+        <a-table-column title="IP" data-index="ipAddress" :width="140" />
         <a-table-column title="当前版本" :width="140" :sorter="(a: PhysicalInstance, b: PhysicalInstance) => compareVersions(a.agentVersion, b.agentVersion)">
           <template #default="{ record }">{{ record.agentVersion || '-' }}</template>
         </a-table-column>

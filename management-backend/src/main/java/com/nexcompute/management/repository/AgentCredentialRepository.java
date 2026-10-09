@@ -12,4 +12,7 @@ public interface AgentCredentialRepository extends JpaRepository<AgentCredential
     Optional<AgentCredential> findByInstanceId(Long instanceId);
 
     Optional<AgentCredential> findByToken(String token);
+
+    /** 删除实例的鉴权凭证（instance-identity：删除实例级联清理） */
+    void deleteByInstanceId(Long instanceId);
 }

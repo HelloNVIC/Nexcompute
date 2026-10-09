@@ -74,6 +74,9 @@ class ImageSyncServiceTest {
     /** save 桩记录的调用时状态快照（status:percent） */
     private final List<String> savedStatuses =
             java.util.Collections.synchronizedList(new ArrayList<>());
+    /** save 桩记录的调用时错误信息快照（instance=error）——失败行会被批次完结清理，事后不能从 taskDb 读 */
+    private final List<String> savedErrors =
+            java.util.Collections.synchronizedList(new ArrayList<>());
 
     @BeforeEach
     void setUp() {
@@ -120,9 +123,18 @@ class ImageSyncServiceTest {
             ImageSyncTask t = inv.getArgument(0);
             // 快照调用时状态（实体随后可能被终态写复用，不能在 verify 阶段读对象）
             savedStatuses.add(t.getStatus() + ":" + t.getPercent());
+            if (t.getErrorMessage() != null) {
+                savedErrors.add(t.getInstanceNumber() + "=" + t.getErrorMessage());
+            }
             taskDb.put(t.getId(), t);
             return t;
         });
+        // 失败任务清理（finishBatch 删 FAILED/TIMEOUT 行）：同步从内存任务表移除
+        doAnswer(inv -> {
+            ImageSyncTask t = inv.getArgument(0);
+            taskDb.remove(t.getId());
+            return null;
+        }).when(taskRepository).delete(any(ImageSyncTask.class));
     }
 
     @AfterEach
@@ -192,29 +204,45 @@ class ImageSyncServiceTest {
     }
 
     @Test
-    void syncAll_timeoutMarksTaskTimeout() {
+    void syncAll_timeoutMarksTaskTimeout_thenCleanupOnFinish() {
         when(agentCommandService.sendCommand(eq("INST-1"), eq("image.pull"), anyMap(), eq(600000L),
                 any(ProgressRouter.ProgressListener.class)))
                 .thenReturn(null);
 
         service.syncAll(2L);
-        awaitTrue(() -> ImageSyncTask.STATUS_TIMEOUT.equals(taskStatus("INST-1")));
-        ImageSyncTask t = taskDb.values().stream().filter(x -> "INST-1".equals(x.getInstanceNumber()))
-                .findFirst().orElseThrow();
-        assertThat(t.getErrorMessage()).contains("受控端无响应");
+        // 终态 TIMEOUT 落库（错误信息经 save 桩快照断言；失败行会被批次完结清理，事后不能从 taskDb 读）
+        awaitTrue(() -> savedErrors.stream().anyMatch(e ->
+                e.startsWith("INST-1=") && e.contains("受控端无响应")));
+        // 批次完结清理：失败任务行删除，离线跳过任务保留
+        awaitTrue(() -> taskStatus("INST-1") == null);
+        assertThat(taskStatus("INST-2")).isEqualTo(ImageSyncTask.STATUS_OFFLINE_SKIPPED);
     }
 
     @Test
-    void syncAll_failureMarksTaskFailedWithError() {
+    void syncAll_failureMarksTaskFailedWithError_thenCleanupOnFinish() {
         when(agentCommandService.sendCommand(eq("INST-1"), eq("image.pull"), anyMap(), eq(600000L),
                 any(ProgressRouter.ProgressListener.class)))
                 .thenReturn(AgentCommandResult.builder().success(false).error("拉取失败: 网络 boom").build());
 
         service.syncAll(2L);
-        awaitTrue(() -> ImageSyncTask.STATUS_FAILED.equals(taskStatus("INST-1")));
-        ImageSyncTask t = taskDb.values().stream().filter(x -> "INST-1".equals(x.getInstanceNumber()))
-                .findFirst().orElseThrow();
-        assertThat(t.getErrorMessage()).contains("boom");
+        awaitTrue(() -> savedErrors.stream().anyMatch(e ->
+                e.startsWith("INST-1=") && e.contains("boom")));
+        // 批次完结清理：失败行删除
+        awaitTrue(() -> taskStatus("INST-1") == null);
+    }
+
+    @Test
+    void syncAll_allFailedBatch_rowRemovedWithTasks() {
+        // 仅一台在线实例且拉取失败 -> 批次完结后任务行与批次行一并删除（零残留）
+        when(instanceRepository.findAll()).thenReturn(java.util.List.of(
+                PhysicalInstance.builder().id(1L).instanceNumber("INST-1").build()));
+        when(agentCommandService.sendCommand(eq("INST-1"), eq("image.pull"), anyMap(), eq(600000L),
+                any(ProgressRouter.ProgressListener.class)))
+                .thenReturn(AgentCommandResult.builder().success(false).error("boom").build());
+
+        service.syncAll(2L);
+        awaitTrue(() -> taskDb.isEmpty());
+        verify(batchRepository, timeout(2000)).delete(any(ImageSyncBatch.class));
     }
 
     @Test

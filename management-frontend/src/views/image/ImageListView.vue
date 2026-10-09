@@ -21,6 +21,10 @@ const auth = useAuthStore()
 const shareLabel = computed(() => (auth.role === 'ADMIN' ? '权限' : '共享'))
 // registry-image-distribution：无标记镜像入口仅管理员
 const isAdmin = computed(() => auth.role === 'ADMIN')
+// 复核反馈：管理员可操作全部镜像；其他角色仅可操作（编辑/上传/刷新/共享/删除）自己的
+function canOperate(image: ImageMetadata): boolean {
+  return isAdmin.value || image.ownerId === auth.user?.id
+}
 
 const loading = ref(false)
 const images = ref<ImageMetadata[]>([])
@@ -517,14 +521,14 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
           </a-table-column>
           <a-table-column title="操作" :width="420">
             <template #default="{ record }">
-              <a-button type="link" size="small" @click="openEdit(record)">编辑</a-button>
+              <a-button v-if="canOperate(record)" type="link" size="small" @click="openEdit(record)">编辑</a-button>
               <a-button
-                v-if="record.distribution === 'REGISTRY'"
+                v-if="record.distribution === 'REGISTRY' && canOperate(record)"
                 type="link" size="small"
                 @click="openPushCommands(record)"
               >上传</a-button>
               <a-button
-                v-if="record.distribution === 'REGISTRY'"
+                v-if="record.distribution === 'REGISTRY' && canOperate(record)"
                 type="link" size="small"
                 @click="refreshValidity(record)"
               >刷新状态</a-button>
@@ -538,8 +542,11 @@ async function downloadImage(image: ImageMetadata): Promise<void> {
                 type="link" size="small"
                 @click="downloadImage(record)"
               >下载</a-button>
-              <a-button type="link" size="small" @click="openShare(record)">{{ shareLabel }}</a-button>
-              <a-button type="link" size="small" danger @click="confirmDelete(record)">删除</a-button>
+              <a-button v-if="canOperate(record)" type="link" size="small" @click="openShare(record)">{{ shareLabel }}</a-button>
+              <a-button
+                v-if="canOperate(record)"
+                type="link" size="small" danger @click="confirmDelete(record)"
+              >删除</a-button>
             </template>
           </a-table-column>
         </a-table>

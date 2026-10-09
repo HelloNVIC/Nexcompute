@@ -17,4 +17,7 @@ public interface PortAllocationRepository extends JpaRepository<PortAllocation, 
     Optional<PortAllocation> findByInstanceIdAndHostPort(Long instanceId, Integer hostPort);
 
     void deleteByContainerId(Long containerId);
+
+    /** 该实例的端口分配数（instance-identity：删除前占用检查） */
+    long countByInstanceId(Long instanceId);
 }

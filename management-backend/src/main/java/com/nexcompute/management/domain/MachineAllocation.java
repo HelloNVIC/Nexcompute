@@ -32,7 +32,7 @@ public class MachineAllocation {
     @Column(name = "group_id")
     private Long groupId;
 
-    @Column(name = "allocated_by", nullable = false)
+    @Column(name = "allocated_by") // V38 改可空：分配者删除后置空，记录保留
     private Long allocatedBy;
 
     /**

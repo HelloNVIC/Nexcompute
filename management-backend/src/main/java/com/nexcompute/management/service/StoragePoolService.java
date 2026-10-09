@@ -65,6 +65,10 @@ public class StoragePoolService {
         if (instance.getStorageRoot() == null || instance.getStorageRoot().isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "受控端未设置存储池根目录，请先在受控端设置根目录");
         }
+        // 离线机器不可建池（复核反馈）：storage.create_dir 无法送达，且先落库会留下无路径的半成品池
+        if (!agentCommandService.isAgentConnected(instance.getInstanceNumber())) {
+            throw new BusinessException(ErrorCode.INSTANCE_OFFLINE, "物理实例不在线，无法创建存储池");
+        }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 

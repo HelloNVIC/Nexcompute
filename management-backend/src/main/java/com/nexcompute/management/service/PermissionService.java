@@ -55,6 +55,30 @@ public class PermissionService {
         };
     }
 
+    /** 单模块三操作权限（角色视角） */
+    public record RolePerm(boolean canView, boolean canEdit, boolean canDelete) {}
+
+    /**
+     * 某角色的全模块权限映射（moduleCode -> 三操作），供前端按权限矩阵渲染菜单与按钮。
+     * 缺行（未配置）视为全 false，与 hasPermission 判定一致。
+     */
+    @Cacheable(value = "permission", key = "'my:' + #role")
+    public Map<String, RolePerm> getPermissionsForRole(UserRole role) {
+        List<PermissionModule> modules = moduleRepository.findAll();
+        Map<Long, PermissionMatrix> byModule = matrixRepository.findAll().stream()
+                .filter(m -> m.getRole() == role)
+                .collect(Collectors.toMap(PermissionMatrix::getModuleId, m -> m));
+        return modules.stream().collect(Collectors.toMap(
+                PermissionModule::getCode,
+                m -> {
+                    PermissionMatrix pm = byModule.get(m.getId());
+                    return new RolePerm(
+                            pm != null && pm.getCanView(),
+                            pm != null && pm.getCanEdit(),
+                            pm != null && pm.getCanDelete());
+                }));
+    }
+
     /**
      * 获取完整权限矩阵（任务 2.3）
      */

@@ -12,4 +12,7 @@ public interface AgentUpgradeTaskRepository extends JpaRepository<AgentUpgradeTa
     List<AgentUpgradeTask> findByInstanceIdOrderByCreatedAtDesc(Long instanceId);
 
     List<AgentUpgradeTask> findAllByOrderByCreatedAtDesc();
+
+    /** 删除实例的升级任务记录（instance-identity：删除实例级联清理） */
+    void deleteByInstanceId(Long instanceId);
 }

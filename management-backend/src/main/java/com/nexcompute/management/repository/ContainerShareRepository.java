@@ -14,6 +14,9 @@ public interface ContainerShareRepository extends JpaRepository<ContainerShare, 
 
     List<ContainerShare> findBySharedToUserId(Long userId);
 
+    /** 该用户分享出的共享记录（V38 用户删除级联） */
+    List<ContainerShare> findBySharedBy(Long sharedBy);
+
     List<ContainerShare> findByContainerIdIn(Collection<Long> containerIds);
 
     boolean existsByContainerIdAndSharedToUserId(Long containerId, Long userId);

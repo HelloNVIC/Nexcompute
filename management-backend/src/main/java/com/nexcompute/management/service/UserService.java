@@ -3,6 +3,7 @@ package com.nexcompute.management.service;
 import com.nexcompute.management.audit.Audited;
 import com.nexcompute.management.common.BusinessException;
 import com.nexcompute.management.common.ErrorCode;
+import com.nexcompute.management.domain.Container;
 import com.nexcompute.management.domain.EmailTrigger;
 import com.nexcompute.management.domain.GroupMember;
 import com.nexcompute.management.domain.ResearchGroup;
@@ -15,6 +16,12 @@ import com.nexcompute.management.dto.UserInfoDto;
 import com.nexcompute.management.repository.GroupMemberRepository;
 import com.nexcompute.management.repository.ContainerShareRepository;
 import com.nexcompute.management.repository.ContainerRepository;
+import com.nexcompute.management.repository.ImageShareRepository;
+import com.nexcompute.management.repository.MachineAllocationRepository;
+import com.nexcompute.management.repository.NotificationMessageRepository;
+import com.nexcompute.management.repository.StoragePoolRepository;
+import com.nexcompute.management.repository.StoragePoolShareRepository;
+import com.nexcompute.management.repository.TicketRepository;
 import com.nexcompute.management.repository.ResearchGroupRepository;
 import com.nexcompute.management.repository.UserFieldConfigRepository;
 import com.nexcompute.management.repository.UserRepository;
@@ -54,6 +61,13 @@ public class UserService {
     private final ContainerShareRepository containerShareRepository;
     private final PasswordEncoder passwordEncoder;
     private final EmailService emailService;
+    // V38 用户删除外键清理链
+    private final NotificationMessageRepository notificationMessageRepository;
+    private final MachineAllocationRepository machineAllocationRepository;
+    private final StoragePoolRepository storagePoolRepository;
+    private final TicketRepository ticketRepository;
+    private final StoragePoolShareRepository storagePoolShareRepository;
+    private final ImageShareRepository imageShareRepository;
 
     /** 获取用户必填项配置（platform-refinements #5） */
     public UserFieldConfig getFieldConfig() {
@@ -233,8 +247,10 @@ public class UserService {
     }
 
     /**
-     * 删除用户（platform-refinements #3）。
-     * 有运行中容器则拒绝；否则清理成员关系/共享关系并删除用户。
+     * 删除用户（platform-refinements #3；V38 外键清理链）。
+     * 占用拦截：容器（含历史）、存储池、工单；随用户删除：消息、名下机器分配、各类共享关系；
+     * "操作人"类历史归属（公告作者/分配者/迁移与同步发起人/邀请创建者/工单回复人）经 V38 FK
+     * ON DELETE SET NULL 置空，记录保留。
      */
     @Audited(action = "USER_DELETE", targetType = "USER", targetIdExpr = "#id")
     @Transactional
@@ -247,14 +263,34 @@ public class UserService {
         if (id.equals(SecurityUtils.getCurrentUserId())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "不能删除当前登录用户");
         }
-        // 运行中容器存在则拒绝
-        if (!containerRepository.findByOwnerId(id).stream()
-                .filter(c -> "RUNNING".equals(c.getStatus())).toList().isEmpty()) {
-            throw new BusinessException(ErrorCode.CONFLICT, "该用户存在运行中容器，请先停止/删除后再删除用户");
+        // 占用拦截：容器（运行中与历史记录均挡，owner FK 不可置空）
+        List<Container> containers = containerRepository.findByOwnerId(id);
+        if (!containers.isEmpty()) {
+            long running = containers.stream().filter(c -> "RUNNING".equals(c.getStatus())).count();
+            throw new BusinessException(ErrorCode.CONFLICT, running > 0
+                    ? "该用户存在 " + running + " 个运行中容器，请先停止/删除容器后再删除用户"
+                    : "该用户存在 " + containers.size() + " 个容器记录，请先删除容器后再删除用户");
         }
-        // 清理：课题组成员关系、作为共享目标的容器共享关系
-        groupMemberRepository.findByUserId(id).forEach(groupMemberRepository::delete);
+        long poolCount = storagePoolRepository.countByOwnerId(id);
+        if (poolCount > 0) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "该用户存在 " + poolCount + " 个存储池，请先删除存储池后再删除用户");
+        }
+        long ticketCount = ticketRepository.countBySubmitterId(id);
+        if (ticketCount > 0) {
+            throw new BusinessException(ErrorCode.CONFLICT,
+                    "该用户提交过 " + ticketCount + " 个工单，请先处理工单后再删除用户");
+        }
+        // 随用户删除：发给该用户的消息、名下机器分配
+        notificationMessageRepository.deleteByUserId(id);
+        machineAllocationRepository.findByUserId(id).forEach(machineAllocationRepository::delete);
+        // 共享关系：分享给该用户的（容器/存储池/镜像）+ 该用户分享出的容器共享
         containerShareRepository.findBySharedToUserId(id).forEach(containerShareRepository::delete);
+        containerShareRepository.findBySharedBy(id).forEach(containerShareRepository::delete);
+        storagePoolShareRepository.findBySharedToUserId(id).forEach(storagePoolShareRepository::delete);
+        imageShareRepository.findBySharedToUserId(id).forEach(imageShareRepository::delete);
+        // 清理：课题组成员关系
+        groupMemberRepository.findByUserId(id).forEach(groupMemberRepository::delete);
         // 用户作为导师的课题组 mentor_id 置空（保留课题组）
         groupRepository.findByMentorId(id).ifPresent(g -> {
             g.setMentorId(null);
